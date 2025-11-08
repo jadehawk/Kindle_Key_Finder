@@ -268,6 +268,35 @@ This tool is intended for use with ebooks you have legally purchased. Users are 
 
 ## Version History
 
+**Version 2025.11.08.JH**
+
+Configuration Management & Version Tracking:
+
+- Added SCRIPT_VERSION constant for tracking script versions
+- Implemented configuration version validation system
+- Auto-detects version mismatches and forces reconfiguration when needed
+- Saves script version to config file on every save operation
+- Prevents issues when new configuration flags are added in updates
+
+Smart Pause & Error Handling:
+
+- Added intelligent pause detection at final summary screen
+- Always pauses when ANY errors are detected (extraction, import, conversion)
+- Respects skip_phase_pauses setting only when execution is error-free
+- Ensures users never miss critical error information
+
+AZW3 Support & Format Flexibility:
+
+- Implemented two-step AZW3→MOBI→EPUB conversion for better quality
+- Added smart format detection to route AZW3 vs other formats appropriately
+- Replaced hardcoded 'KFX' deletion with dynamic source format detection
+- Updated terminology from 'KFX' to generic 'source format' throughout
+- Changed config value from `delete_kfx` to `delete_source`
+- Added temp_extraction folder cleanup after Phase 4 completion
+- Removed legacy config support (version checking handles upgrades)
+- Fixed conversion issues with AZW3 files
+- Enabled proper source file management for all Kindle formats (KFX, AZW, AZW3, KFX-ZIP)
+
 **Version 2025.11.07.JH**
 
 - Initial public release
