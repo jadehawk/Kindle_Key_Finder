@@ -8,7 +8,7 @@ No external dependencies - uses the same methods as the plugin
 """
 
 # Script Version
-SCRIPT_VERSION = "2025.11.07.JH"
+SCRIPT_VERSION = "2025.11.08.JH"
 
 # Unified Configuration File
 CONFIG_FILE = "key_finder_config.json"
@@ -83,6 +83,7 @@ def display_phase_summary(phase_num, phase_name, summary_points, pause_seconds=5
     """
     Display phase completion summary with countdown
     Allows user to press any key to skip countdown
+    Respects skip_phase_pauses configuration flag
     """
     print()
     print("=" * 70)
@@ -93,6 +94,18 @@ def display_phase_summary(phase_num, phase_name, summary_points, pause_seconds=5
     for point in summary_points:
         print(f"  ✓ {point}")
     print()
+    
+    # Check if pauses should be skipped
+    config = load_config()
+    skip_pauses = config.get('skip_phase_pauses', False) if config else False
+    
+    if skip_pauses:
+        # Skip countdown - just display summary and continue
+        print_step("Continuing to next phase...")
+        print()
+        return
+    
+    # Show countdown with skip capability
     print(f"Continuing to next phase in {pause_seconds} seconds...")
     print("(Press any key to skip countdown)")
     print()
@@ -1194,7 +1207,8 @@ def save_config(config):
     config_path = os.path.join(script_dir, CONFIG_FILE)
     
     try:
-        # Add timestamp (type: ignore for mixed dict types)
+        # Add script version and timestamp (type: ignore for mixed dict types)
+        config['script_version'] = SCRIPT_VERSION  # type: ignore
         config['last_updated'] = datetime.now().isoformat()  # type: ignore
         
         with open(config_path, 'w') as f:
@@ -1205,6 +1219,15 @@ def save_config(config):
     except Exception as e:
         print_error(f"Failed to save configuration: {e}")
         return False
+
+def check_config_version(config):
+    """
+    Check if config version matches current script version
+    Returns: (is_valid: bool, config_version: str, current_version: str)
+    """
+    config_version = config.get('script_version', 'Unknown')
+    is_valid = (config_version == SCRIPT_VERSION)
+    return is_valid, config_version, SCRIPT_VERSION
 
 def delete_config():
     """Delete configuration file"""
@@ -1248,6 +1271,10 @@ def display_config_summary(config):
     # Clear Screen Between Phases
     clear_screen = "Yes" if config.get('clear_screen_between_phases', True) else "No"
     print(f"│ Clear Screen Between Phases │ {clear_screen:<72} │")
+    
+    # Skip Phase Pauses
+    skip_pauses = "Yes" if config.get('skip_phase_pauses', False) else "No"
+    print(f"│ Skip Phase Pauses           │ {skip_pauses:<72} │")
     
     # Calibre Import section
     if 'calibre_import' in config:
@@ -1357,7 +1384,11 @@ def prompt_config_action_with_timer(config):
                     print_ok("Library path validated")
                 print()
     
-    print("Press any key to show options, or wait 10 seconds to use saved configuration...")
+    # Check if pauses should be skipped to adjust countdown time
+    skip_pauses = config.get('skip_phase_pauses', False)
+    countdown_seconds = 3 if skip_pauses else 10
+    
+    print(f"Press any key to show options, or wait {countdown_seconds} seconds to use saved configuration...")
     print()
     
     timer_cancelled = threading.Event()
@@ -1366,7 +1397,7 @@ def prompt_config_action_with_timer(config):
     
     def countdown_timer():
         nonlocal countdown_active
-        for i in range(10, 0, -1):
+        for i in range(countdown_seconds, 0, -1):
             if timer_cancelled.is_set() or user_interrupted.is_set():
                 countdown_active = False
                 return
@@ -1565,7 +1596,7 @@ def configure_pre_flight_wizard(user_home):
     print()
     
     # 4. Clear Screen Between Phases
-    print_step("[4/5] Display Options")
+    print_step("[4/6] Display Options")
     print("--------------------------------------------------")
     print("Clear screen between each phase for cleaner output?")
     print()
@@ -1600,17 +1631,65 @@ def configure_pre_flight_wizard(user_home):
     print_step("PRE-FLIGHT CONFIGURATION WIZARD")
     print("=" * 70)
     print()
-    print_ok(f"✓ [1/5] Kindle Content Path: {config['kindle_content_path']}")
+    print_ok(f"✓ [1/6] Kindle Content Path: {config['kindle_content_path']}")
     hide_status = "Yes" if config['hide_sensitive_info'] else "No"
-    print_ok(f"✓ [2/5] Hide Sensitive Info: {hide_status}")
+    print_ok(f"✓ [2/6] Hide Sensitive Info: {hide_status}")
     fetch_status = "Yes" if config['fetch_book_titles'] else "No"
-    print_ok(f"✓ [3/5] Fetch Book Titles: {fetch_status}")
+    print_ok(f"✓ [3/6] Fetch Book Titles: {fetch_status}")
     clear_status = "Yes" if config['clear_screen_between_phases'] else "No"
-    print_ok(f"✓ [4/5] Clear Screen Between Phases: {clear_status}")
+    print_ok(f"✓ [4/6] Clear Screen Between Phases: {clear_status}")
     print()
     
-    # 5. Calibre Import Settings
-    print_step("[5/5] Calibre Auto-Import")
+    # 5. Skip Phase Pauses
+    print_step("[5/6] Phase Pause Settings")
+    print("--------------------------------------------------")
+    print("Skip countdown pauses between phases for faster execution?")
+    print()
+    print_warn("NOTE:")
+    print("  - Pauses allow you to review phase summaries before continuing")
+    print("  - Skipping pauses makes the script run faster without interruption")
+    print("  - Initial config review pause will be reduced to 3 seconds (from 10)")
+    print("  - Phase summaries will still be displayed even if pauses are skipped")
+    print("  - Recommended: No (keep pauses for better visibility)")
+    print()
+    
+    while True:
+        choice = input("Skip phase pauses? (Y/N) [N]: ").strip().upper()
+        if choice == '':
+            choice = 'N'  # Default to No (keep pauses)
+        if choice in ['Y', 'N']:
+            config['skip_phase_pauses'] = (choice == 'Y')  # type: ignore
+            print()
+            if choice == 'Y':
+                print_ok("✓ Phase pauses will be skipped (faster execution)")
+            else:
+                print_ok("✓ Phase pauses will be shown (better visibility)")
+            break
+        print_error("Please enter Y or N")
+    
+    print()
+    
+    # Clear console before next question
+    os.system('cls')
+    print()
+    print_banner_and_version()
+    print("=" * 70)
+    print_step("PRE-FLIGHT CONFIGURATION WIZARD")
+    print("=" * 70)
+    print()
+    print_ok(f"✓ [1/6] Kindle Content Path: {config['kindle_content_path']}")
+    hide_status = "Yes" if config['hide_sensitive_info'] else "No"
+    print_ok(f"✓ [2/6] Hide Sensitive Info: {hide_status}")
+    fetch_status = "Yes" if config['fetch_book_titles'] else "No"
+    print_ok(f"✓ [3/6] Fetch Book Titles: {fetch_status}")
+    clear_status = "Yes" if config['clear_screen_between_phases'] else "No"
+    print_ok(f"✓ [4/6] Clear Screen Between Phases: {clear_status}")
+    skip_pauses_status = "Yes" if config['skip_phase_pauses'] else "No"
+    print_ok(f"✓ [5/6] Skip Phase Pauses: {skip_pauses_status}")
+    print()
+    
+    # 6. Calibre Import Settings
+    print_step("[6/6] Calibre Auto-Import")
     print("--------------------------------------------------")
     print("Enable automatic import of DeDRMed ebooks to Calibre?")
     print("(You can configure this later if you skip now)")
@@ -1976,7 +2055,7 @@ def prompt_calibre_import_settings():
     print_step("PRE-FLIGHT CONFIGURATION WIZARD")
     print("=" * 70)
     print()
-    print_step("[5/5] Calibre Auto-Import")
+    print_step("[6/6] Calibre Auto-Import")
     print("--------------------------------------------------")
     print()
     
@@ -2016,7 +2095,7 @@ def prompt_calibre_import_settings():
     print_step("PRE-FLIGHT CONFIGURATION WIZARD")
     print("=" * 70)
     print()
-    print_ok(f"✓ [5/5] Calibre Auto-Import")
+    print_ok(f"✓ [6/6] Calibre Auto-Import")
     if book_count is not None:
         print(f"  ✓ Library Path: {config_progress['library_path']} ({book_count} books)")
     else:
@@ -2058,7 +2137,7 @@ def prompt_calibre_import_settings():
         print_step("PRE-FLIGHT CONFIGURATION WIZARD")
         print("=" * 70)
         print()
-        print_ok(f"✓ [5/5] Calibre Auto-Import")
+        print_ok(f"✓ [6/6] Calibre Auto-Import")
         print(f"  ✓ Library Path: {config_progress['library_path']}")
         convert_status = "Yes" if config_progress['convert_to_epub'] else "No"
         print(f"  ✓ Convert to EPUB: {convert_status}")
@@ -2102,7 +2181,7 @@ def prompt_calibre_import_settings():
         print_step("PRE-FLIGHT CONFIGURATION WIZARD")
         print("=" * 70)
         print()
-        print_ok(f"✓ [5/5] Calibre Auto-Import")
+        print_ok(f"✓ [6/6] Calibre Auto-Import")
         print(f"  ✓ Library Path: {config_progress['library_path']}")
         convert_status = "Yes" if config_progress['convert_to_epub'] else "No"
         print(f"  ✓ Convert to EPUB: {convert_status}")
@@ -3356,16 +3435,35 @@ def main():
         saved_config = load_config()
         
         if saved_config:
-            # Configuration exists - show options with timer
-            action = prompt_config_action_with_timer(saved_config)
+            # Check if configuration version matches current script version
+            is_valid, config_version, current_version = check_config_version(saved_config)
             
-            if action == 'quit':
-                print_warn("Script cancelled by user")
-                return 0
-            elif action == 'reconfigure':
-                print_step("Starting reconfiguration wizard...")
+            if not is_valid:
+                # Version mismatch detected - force reconfiguration
+                print_error("=" * 70)
+                print_error("CONFIGURATION VERSION MISMATCH DETECTED!")
+                print_error("=" * 70)
+                print()
+                print_warn(f"Saved Configuration Version: {config_version}")
+                print_warn(f"Current Script Version:      {current_version}")
+                print()
+                print("The configuration format has changed and requires reconfiguration.")
+                print("This ensures compatibility with new features and settings.")
+                print()
+                input("Press Enter to start the configuration wizard...")
+                print()
                 saved_config = configure_pre_flight_wizard(user_home)
-            # else action == 'use', proceed with saved config
+            else:
+                # Configuration exists and version matches - show options with timer
+                action = prompt_config_action_with_timer(saved_config)
+                
+                if action == 'quit':
+                    print_warn("Script cancelled by user")
+                    return 0
+                elif action == 'reconfigure':
+                    print_step("Starting reconfiguration wizard...")
+                    saved_config = configure_pre_flight_wizard(user_home)
+                # else action == 'use', proceed with saved config
         else:
             # First run - show wizard
             print_step("First run detected - starting configuration wizard...")
@@ -3511,19 +3609,9 @@ def main():
         print_ok("DeDRM configuration updated successfully!")
         print_ok("Updated key: kindlekey")
         print_ok(f"Set extra key file: {output_key}")
-
-        print("==================================================")
-        print_done("[PHASE 2] DeDRM plugin configuration complete!")
-        print("==================================================")
-        print()
-        
-        # Pause before final verification
-        print_step("Pausing for 5 seconds before final verification...")
-        time.sleep(5)
         print()
 
         # Final verification
-        print()
         print_step("Verifying configuration...")
         print()
 
@@ -3607,8 +3695,19 @@ def main():
         print()
         
         print_ok("Configuration verified successfully!")
-        time.sleep(5)
         print()
+        
+        # Display Phase 2 summary
+        summary_points = [
+            "Processed kindlekey.k4i and created Kindle key data",
+            "Updated DeDRM plugin configuration (dedrm.json)",
+            f"Set extra key file path: {output_key}",
+            "Added account keys to plugin database",
+            f"Created configuration backup: {backup_json}",
+            "Configuration verified successfully"
+        ]
+        
+        display_phase_summary(2, "DeDRM Plugin Configuration", summary_points, pause_seconds=5)
         
         # === PHASE 3: CALIBRE AUTO-IMPORT ===
         imported_count = 0
@@ -3696,7 +3795,7 @@ def main():
                     if len(import_results['timed_out_books']) > 5:
                         print(f"        ... and {len(import_results['timed_out_books']) - 5} more")
         
-        if conversion_stats:
+        if conversion_stats and isinstance(conversion_stats, dict):
             if conversion_stats.get('failed', 0) > 0:
                 print()
                 print_warn(f"Conversion Issues: {conversion_stats['failed']} book(s) failed to convert")
@@ -3710,9 +3809,27 @@ def main():
             if conversion_stats.get('skipped_kfx_zip', 0) > 0:
                 print()
                 print_warn(f"Conversion Skipped: {conversion_stats['skipped_kfx_zip']} .kfx-zip file(s) skipped")
-        print()
-        print("Press Any key to continue...")
-        msvcrt.getch()
+        
+        # Determine if we should pause based on errors and skip_phase_pauses setting
+        has_errors = False
+        if extraction_stats and extraction_stats.get('failed', 0) > 0:
+            has_errors = True
+        if import_results and isinstance(import_results, dict):
+            if import_results.get('skipped', 0) > 0 or import_results.get('failed', 0) > 0 or import_results.get('timed_out', 0) > 0:
+                has_errors = True
+        if conversion_stats and isinstance(conversion_stats, dict):
+            if conversion_stats.get('failed', 0) > 0 or conversion_stats.get('skipped_kfx_zip', 0) > 0:
+                has_errors = True
+        
+        # Always pause if there are errors, otherwise respect skip_phase_pauses setting
+        skip_pauses = saved_config.get('skip_phase_pauses', False) if saved_config else False
+        should_pause = has_errors or not skip_pauses
+        
+        if should_pause:
+            print()
+            print("Press Any key to continue...")
+            msvcrt.getch()
+        
         os.system('cls')
         print()
         print_banner_and_version()
