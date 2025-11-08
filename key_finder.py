@@ -1315,8 +1315,8 @@ def display_config_summary(config):
             # Source Management
             source_mgmt = cal.get('source_file_management', 'keep_both')
             source_mgmt_display = {
-                'keep_both': 'Keep Both (KFX + EPUB)',
-                'delete_kfx': 'Delete KFX after conversion',
+                'keep_both': 'Keep Both (Source + EPUB)',
+                'delete_source': 'Delete Source after conversion',
                 'delete_kfx_zip_only': 'Delete .kfx-zip only'
             }.get(source_mgmt, source_mgmt)
             print(f"│   Source Management         │ {source_mgmt_display:<72} │")
@@ -2102,11 +2102,11 @@ def prompt_calibre_import_settings():
         print(f"  ✓ Library Path: {config_progress['library_path']}")
     print()
     
-    # Ask about KFX to EPUB conversion
-    print_step("KFX to EPUB Conversion")
+    # Ask about Imported eBook to EPUB conversion
+    print_step("Imported eBook to EPUB Conversion")
     print("--------------------------------------------------")
     print()
-    print("After importing KFX books, they can be automatically converted to EPUB format.")
+    print("After importing ebooks, they can be automatically converted to EPUB format.")
     print()
     print_warn("NOTES:")
     print("  - Conversion uses ebook-convert command")
@@ -2115,7 +2115,7 @@ def prompt_calibre_import_settings():
     print()
     
     while True:
-        convert_choice = input("Convert imported KFX books to EPUB? (Y/N) [Y]: ").strip().upper()
+        convert_choice = input("Convert imported eBooks to EPUB? (Y/N) [Y]: ").strip().upper()
         if convert_choice == '':
             convert_choice = 'Y'  # Default to Yes
         if convert_choice in ['Y', 'N']:
@@ -2193,12 +2193,12 @@ def prompt_calibre_import_settings():
         print_step("Source File Management")
         print("--------------------------------------------------")
         print()
-        print("After successful EPUB conversion, what should happen to the source KFX files?")
+        print("After successful EPUB conversion, what should happen to the source format files?")
         print()
         print("Options:")
-        print("  [K] Keep Both - Preserve both KFX and EPUB formats")
-        print("  [D] Delete KFX - Remove ALL KFX formats (including .kfx-zip) after successful EPUB conversion (recommended)")
-        print("  [S] Smart Cleanup - Delete ALL .kfx-zip files, keep regular .kfx only if EPUB conversion succeeds")
+        print("  [K] Keep Both - Preserve both source format and EPUB formats")
+        print("  [D] Delete Source - Remove source format (KFX/AZW3/AZW) after successful EPUB conversion (recommended)")
+        print("  [S] Smart Cleanup - Delete only .kfx-zip files, keep other formats")
         print()
         
         while True:
@@ -2207,17 +2207,17 @@ def prompt_calibre_import_settings():
                 choice = 'D'  # Default to recommended option
             if choice == 'K':
                 print()
-                print_ok("Will keep both KFX and EPUB formats")
+                print_ok("Will keep both source format and EPUB formats")
                 source_file_management = 'keep_both'
                 break
             elif choice == 'D':
                 print()
-                print_warn("Will delete KFX format after successful EPUB conversion")
-                source_file_management = 'delete_kfx'
+                print_warn("Will delete source format after successful EPUB conversion")
+                source_file_management = 'delete_source'
                 break
             elif choice == 'S':
                 print()
-                print_ok("Will delete only .kfx-zip files, keeping regular .kfx files")
+                print_ok("Will delete only .kfx-zip files, keeping other formats")
                 source_file_management = 'delete_kfx_zip_only'
                 break
             else:
@@ -2814,10 +2814,18 @@ def query_book_paths_from_db(library_path, book_ids):
     book_info = query_book_info_from_db(library_path, book_ids)
     return {book_id: info['path'] for book_id, info in book_info.items()}
 
-def find_kfx_file_in_directory(book_dir):
+def find_source_file_in_directory(book_dir):
     """
-    Find the .kfx/.azw/.kfx-zip file in the book directory
-    Returns: tuple (filename, is_kfx_zip) or (None, False) if not found
+    Find the source ebook file in the book directory.
+    Searches for Kindle format files: .kfx, .azw, .azw3, or .kfx-zip
+    
+    Args:
+        book_dir: Path to the book directory in Calibre library
+    
+    Returns:
+        tuple: (filename, is_kfx_zip) or (None, False) if not found
+               - filename: Name of the source file found
+               - is_kfx_zip: True if file is .kfx-zip format, False otherwise
     """
     try:
         if not os.path.exists(book_dir):
@@ -2825,7 +2833,7 @@ def find_kfx_file_in_directory(book_dir):
         
         for filename in os.listdir(book_dir):
             lower_name = filename.lower()
-            if lower_name.endswith(('.kfx', '.azw', '.kfx-zip')):
+            if lower_name.endswith(('.kfx', '.azw', '.azw3', '.kfx-zip')):
                 is_kfx_zip = lower_name.endswith('.kfx-zip')
                 return filename, is_kfx_zip
         
@@ -2835,17 +2843,16 @@ def find_kfx_file_in_directory(book_dir):
         print_error(f"Error searching directory {book_dir}: {e}")
         return None, False
 
-def convert_book_to_epub(kfx_path, epub_path):
+def convert_book_to_epub(source_path, epub_path):
     """
-    Convert KFX book to EPUB using ebook-convert
+    Convert Imported eBook to EPUB using ebook-convert
     Returns: (success: bool, error_message: str)
     """
     try:
         cmd = [
             'ebook-convert',
-            kfx_path,
+            source_path,
             epub_path,
-            '--allow-conversion-with-errors',
             '--input-profile=default',
             '--output-profile=tablet',
             '--no-svg-cover',
@@ -2866,6 +2873,95 @@ def convert_book_to_epub(kfx_path, epub_path):
         return False, "Conversion timeout (5 minutes)"
     except Exception as e:
         return False, str(e)
+
+def convert_azw3_via_mobi(source_path, epub_path):
+    """
+    Convert AZW3 to EPUB via temporary MOBI intermediate format
+    Two-step conversion: AZW3 → MOBI → EPUB
+    
+    This produces better results than direct AZW3 → EPUB conversion
+    because MOBI acts as a better intermediate format for preserving
+    layout and formatting.
+    
+    Temp MOBI file is created in temp_extraction folder for automatic
+    cleanup by cleanup_temp_extraction() on next script run.
+    
+    Args:
+        source_path: Path to source AZW3 file
+        epub_path: Path to output EPUB file
+    
+    Returns:
+        tuple: (success: bool, error_message: str)
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    temp_extraction_dir = os.path.join(script_dir, "temp_extraction")
+    
+    # Fixed filename - safe because conversions happen sequentially
+    temp_mobi_path = os.path.join(temp_extraction_dir, "temp_conversion.mobi")
+    
+    try:
+        # Ensure temp directory exists
+        os.makedirs(temp_extraction_dir, exist_ok=True)
+        
+        # Step 1: Convert AZW3 to MOBI
+        cmd_mobi = [
+            'ebook-convert',
+            source_path,
+            temp_mobi_path,
+            '--input-profile=default',
+            '--output-profile=tablet'
+        ]
+        
+        result_mobi = subprocess.run(
+            cmd_mobi,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=300
+        )
+        
+        if result_mobi.returncode != 0 or not os.path.exists(temp_mobi_path):
+            error_msg = result_mobi.stderr if result_mobi.stderr else "AZW3 to MOBI conversion failed"
+            return False, f"Step 1 failed: {error_msg}"
+        
+        # Step 2: Convert MOBI to EPUB
+        cmd_epub = [
+            'ebook-convert',
+            temp_mobi_path,
+            epub_path,
+            '--input-profile=default',
+            '--output-profile=tablet',
+            '--no-svg-cover',
+            '--epub-version=3'
+        ]
+        
+        result_epub = subprocess.run(
+            cmd_epub,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=300
+        )
+        
+        if result_epub.returncode == 0 and os.path.exists(epub_path):
+            return True, ""
+        else:
+            error_msg = result_epub.stderr if result_epub.stderr else "MOBI to EPUB conversion failed"
+            return False, f"Step 2 failed: {error_msg}"
+            
+    except subprocess.TimeoutExpired:
+        return False, "Conversion timeout (5 minutes per step)"
+    except Exception as e:
+        return False, str(e)
+    finally:
+        # Always try to cleanup temp MOBI file
+        if os.path.exists(temp_mobi_path):
+            try:
+                os.remove(temp_mobi_path)
+            except Exception:
+                pass  # If cleanup fails, cleanup_temp_extraction() will handle it on next run
 
 def add_epub_format_to_calibre(book_id, epub_path, library_path):
     """
@@ -3053,7 +3149,7 @@ def process_book_conversions(library_path, book_ids, calibre_config=None):
     if config and config.get('clear_screen_between_phases', True):
         os.system('cls')
     
-    display_phase_banner(4, "KFX to EPUB Conversion")
+    display_phase_banner(4, "Imported eBook to EPUB Conversion")
     
     stats = {
         'total': len(book_ids),
@@ -3110,11 +3206,11 @@ def process_book_conversions(library_path, book_ids, calibre_config=None):
         # Construct full path to book directory
         book_dir = os.path.join(library_path, book_path)
         
-        # Find KFX file (returns tuple: filename, is_kfx_zip)
-        kfx_filename, is_kfx_zip = find_kfx_file_in_directory(book_dir)
+        # Find source file (returns tuple: filename, is_kfx_zip)
+        source_filename, is_kfx_zip = find_source_file_in_directory(book_dir)
         
-        if not kfx_filename:
-            error_msg = f"No KFX/AZW file found in {book_path}"
+        if not source_filename:
+            error_msg = f"No source file (KFX/AZW/AZW3/KFX-ZIP) found in {book_path}"
             print_error(error_msg)
             stats['failed'] += 1
             stats['errors'].append(f"Book {book_id}: {error_msg}")
@@ -3124,23 +3220,30 @@ def process_book_conversions(library_path, book_ids, calibre_config=None):
         
         # Check if we should skip .kfx-zip files
         if is_kfx_zip and skip_kfx_zip:
-            print(f"  Source: {kfx_filename}")
+            print(f"  Source: {source_filename}")
             print(f"  Skipping .kfx-zip file (DRM-protected)")
             stats['skipped_kfx_zip'] += 1
             stats['skipped_books'].append((book_id, title, author, "KFX-ZIP file (DRM-protected)"))
             print()
             continue
         
-        kfx_path = os.path.join(book_dir, kfx_filename)
-        epub_filename = os.path.splitext(kfx_filename)[0] + '.epub'
+        source_path = os.path.join(book_dir, source_filename)
+        epub_filename = os.path.splitext(source_filename)[0] + '.epub'
         epub_path = os.path.join(book_dir, epub_filename)
         
-        print(f"  Source: {kfx_filename}")
+        print(f"  Source: {source_filename}")
         print(f"  Target: {epub_filename}")
         
-        # Convert to EPUB
-        print("  Converting to EPUB...")
-        success, error = convert_book_to_epub(kfx_path, epub_path)
+        # Detect if this is AZW3 format
+        is_azw3 = source_filename.lower().endswith('.azw3')
+        
+        # Convert to EPUB (route based on format)
+        if is_azw3:
+            print("  Converting to EPUB (via MOBI intermediate)...")
+            success, error = convert_azw3_via_mobi(source_path, epub_path)
+        else:
+            print("  Converting to EPUB...")
+            success, error = convert_book_to_epub(source_path, epub_path)
         
         if not success:
             print_error(f"  {error}")
@@ -3169,15 +3272,18 @@ def process_book_conversions(library_path, book_ids, calibre_config=None):
             stats['merged'] += 1
             
             # Handle source file management based on user choice
-            if source_management == 'delete_kfx':
-                # Delete KFX format regardless of file type
-                print("  Removing KFX format from Calibre...")
-                success, error = remove_format_from_calibre(book_id, 'KFX', library_path)
+            if source_management == 'delete_source':
+                # Determine the actual source format to delete
+                source_ext = os.path.splitext(source_filename)[1].upper().replace('.', '')
+                
+                # Delete the actual source format (KFX, AZW3, AZW, or KFX-ZIP)
+                print(f"  Removing {source_ext} format from Calibre...")
+                success, error = remove_format_from_calibre(book_id, source_ext, library_path)
                 if success:
-                    print_ok("  KFX format removed")
+                    print_ok(f"  {source_ext} format removed")
                     stats['source_files_deleted'] += 1
                 else:
-                    print_warn(f"  Failed to remove KFX format: {error}")
+                    print_warn(f"  Failed to remove {source_ext} format: {error}")
             
             elif source_management == 'delete_kfx_zip_only' and is_kfx_zip:
                 # Delete only .kfx-zip files
@@ -3236,6 +3342,10 @@ def process_book_conversions(library_path, book_ids, calibre_config=None):
         summary_points.append(f"Source files removed: {stats['source_files_deleted']}")
     
     display_phase_summary(4, "KFX to EPUB Conversion", summary_points, pause_seconds=5)
+    
+    # Cleanup temp_extraction folder after all conversions complete
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    cleanup_temp_extraction(silent=True)
     
     return stats
 
@@ -3319,7 +3429,7 @@ def attempt_calibre_import(content_dir, script_dir, calibre_already_confirmed=Fa
             f"Imported {imported_count} ebook(s) to Calibre library",
             f"Books added with IDs: {', '.join(book_ids) if book_ids else 'None'}",
             "DeDRM plugin automatically processed all imports",
-            "Books are now available in KFX format in Calibre"
+            "Books are now available in Calibre"
         ]
         
         # Add timeout/failure info to summary if applicable
@@ -3420,7 +3530,7 @@ def main():
     print("Phase 1: Key Extraction (Plugin-Compatible)")
     print("Phase 2: DeDRM Plugin Auto-Configuration")
     print("Phase 3: Calibre Auto-Import")
-    print("Phase 4: KFX to EPUB Conversion")
+    print("Phase 4: Imported eBooks to EPUB Conversion")
     print("==================================================")
     print()
 
@@ -3735,7 +3845,11 @@ def main():
                 converted_count = conversion_stats['merged']
         else:
             imported_count = result if result is not None else 0
-        os.system('cls')
+        
+        # Clear screen only if configured to do so
+        if saved_config.get('clear_screen_between_phases', True):
+            os.system('cls')
+        
         print("==================================================")
         print_done("SUCCESS! Complete automation finished!")
         print("==================================================")
