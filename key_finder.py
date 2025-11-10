@@ -1168,9 +1168,12 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
             # else action == 'all', process everything
         
         if not book_folders:
-            print_warn("No new books to process")
+            print_ok("No new books to process - all books have been previously processed")
             print()
-            return False, None, None, extraction_stats
+            print_step("Script will now exit gracefully")
+            print()
+            # Return success (not failure) since this is an expected scenario
+            return True, None, None, extraction_stats
         
         # Process each book individually
         print_step(f"Extracting keys from {len(book_folders)} book(s)...")
