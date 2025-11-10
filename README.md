@@ -268,6 +268,21 @@ This tool is intended for use with ebooks you have legally purchased. Users are 
 
 ## Version History
 
+**Version 2025.11.09.JH**
+
+Auto-Launch Kindle & Book History Tracking:
+
+- Added Auto-Launch Kindle feature with configuration option
+- Script can now automatically launch Kindle.exe and wait for it to close
+- Validates books are present before proceeding with extraction
+- Implemented book processing history tracking system (history.txt)
+- Tracks ASINs of successfully processed books
+- Prompts user to skip previously processed books or re-process all
+- History tracking integrated across all phases (extraction, import, final summary)
+- Skipped books are excluded from Calibre import to prevent duplicates
+- Added detailed display of skipped books in final summary with ASINs and titles
+- Fixed display_config_summary to show Auto-Launch Kindle setting
+
 **Version 2025.11.08.JH**
 
 Configuration Management & Version Tracking:

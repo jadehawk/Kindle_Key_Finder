@@ -8,7 +8,7 @@ No external dependencies - uses the same methods as the plugin
 """
 
 # Script Version
-SCRIPT_VERSION = "2025.11.08.JH"
+SCRIPT_VERSION = "2025.11.09.JH"
 
 # Unified Configuration File
 CONFIG_FILE = "key_finder_config.json"
@@ -537,6 +537,50 @@ def find_kindle_exe():
         print()
         return None, False
 
+def launch_and_wait_for_kindle():
+    """
+    Launch Kindle.exe and wait for it to close
+    Returns: (success: bool, error_message: str)
+    """
+    try:
+        # Find Kindle.exe location
+        kindle_dir, _ = find_kindle_exe()
+        
+        if not kindle_dir:
+            return False, "Kindle.exe not found. Please install Kindle for PC."
+        
+        kindle_exe = os.path.join(kindle_dir, "Kindle.exe")
+        
+        if not os.path.exists(kindle_exe):
+            return False, f"Kindle.exe not found at: {kindle_exe}"
+        
+        print_step("Launching Kindle.exe...")
+        print(f"  Location: {kindle_exe}")
+        print()
+        
+        # Launch Kindle
+        process = subprocess.Popen([kindle_exe])
+        
+        print_ok("Kindle launched successfully")
+        print()
+        print_warn("Please use Kindle to download any books you want to process")
+        print_warn("When finished, close Kindle to continue with key extraction")
+        print()
+        print_step("Waiting for Kindle to close...")
+        print("  (Script will automatically continue when Kindle exits)")
+        print()
+        
+        # Wait for process to exit
+        process.wait()
+        
+        print_ok("Kindle closed - continuing with script")
+        print()
+        
+        return True, ""
+        
+    except Exception as e:
+        return False, f"Failed to launch Kindle: {str(e)}"
+
 def create_temp_kindle_copy(source_dir):
     """
     Create a temporary copy of Kindle installation in AppData
@@ -656,6 +700,80 @@ def fetch_book_title_from_asin(asin):
     except Exception:
         # If command fails, return ASIN
         return asin
+
+def load_book_history(script_dir):
+    """
+    Load book processing history from history.txt
+    Returns: set of ASINs that have been previously processed
+    """
+    history_file = os.path.join(script_dir, "history.txt")
+    processed_asins = set()
+    
+    try:
+        if os.path.exists(history_file):
+            with open(history_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    asin = line.strip()
+                    if asin:
+                        processed_asins.add(asin)
+            print_ok(f"Loaded history: {len(processed_asins)} book(s) previously processed")
+        else:
+            print_step("No history file found - this appears to be first run")
+    except Exception as e:
+        print_warn(f"Failed to load history file: {e}")
+    
+    return processed_asins
+
+def append_to_history(script_dir, asin):
+    """
+    Append ASIN to history.txt after successful extraction
+    """
+    history_file = os.path.join(script_dir, "history.txt")
+    
+    try:
+        with open(history_file, 'a', encoding='utf-8') as f:
+            f.write(f"{asin}\n")
+    except Exception as e:
+        print_warn(f"Failed to update history file: {e}")
+
+def prompt_history_action(total_books, previously_processed_count):
+    """
+    Prompt user what to do with previously processed books
+    Returns: 'all' | 'new' | 'quit'
+    """
+    print()
+    print_step("Book Processing History Check")
+    print("--------------------------------------------------")
+    print(f"Total books found: {total_books}")
+    print(f"Previously processed: {previously_processed_count}")
+    print(f"New books: {total_books - previously_processed_count}")
+    print()
+    print("Options:")
+    print("  [A] Process All - Re-process everything including previously processed books")
+    print("  [N] Process New Only - Skip previously processed books (recommended)")
+    print("  [Q] Quit - Exit script")
+    print()
+    
+    while True:
+        choice = input("Your choice (A/N/Q) [N]: ").strip().upper()
+        if choice == '':
+            choice = 'N'  # Default to New Only
+        if choice == 'A':
+            print()
+            print_ok("Will process all books including previously processed")
+            print()
+            return 'all'
+        elif choice == 'N':
+            print()
+            print_ok("Will skip previously processed books")
+            print()
+            return 'new'
+        elif choice == 'Q':
+            print()
+            print_warn("Script cancelled by user")
+            return 'quit'
+        else:
+            print_error("Invalid choice. Please enter A, N, or Q.")
 
 def scan_kindle_content_directory(content_dir):
     """
@@ -994,7 +1112,9 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
         'total': 0,
         'success': 0,
         'failed': 0,
-        'failed_books': []  # List of tuples: (asin, title, error_msg)
+        'skipped': 0,
+        'failed_books': [],  # List of tuples: (asin, title, error_msg)
+        'skipped_books': []  # List of tuples: (asin, title, reason)
     }
     
     # Load config to check if book title fetching is enabled
@@ -1019,6 +1139,38 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
         extraction_stats['total'] = len(book_folders)
         print_ok(f"Found {len(book_folders)} book folder(s)")
         print()
+        
+        # Load book history
+        processed_asins = load_book_history(script_dir)
+        
+        # Check if any books were previously processed
+        previously_processed = [asin for asin, _, _ in book_folders if asin in processed_asins]
+        
+        if previously_processed:
+            # Prompt user for action
+            action = prompt_history_action(len(book_folders), len(previously_processed))
+            
+            if action == 'quit':
+                print_warn("Script cancelled by user")
+                return False, None, None, extraction_stats
+            elif action == 'new':
+                # Track which books are being skipped due to history
+                skipped = [(asin, title, "Previously processed") 
+                          for asin, _, title in book_folders 
+                          if asin in processed_asins]
+                extraction_stats['skipped_books'] = skipped
+                extraction_stats['skipped'] = len(skipped)
+                
+                # Filter out previously processed books
+                book_folders = [(asin, path, title) for asin, path, title in book_folders if asin not in processed_asins]
+                print_ok(f"Processing {len(book_folders)} new book(s)")
+                print()
+            # else action == 'all', process everything
+        
+        if not book_folders:
+            print_warn("No new books to process")
+            print()
+            return False, None, None, extraction_stats
         
         # Process each book individually
         print_step(f"Extracting keys from {len(book_folders)} book(s)...")
@@ -1063,6 +1215,9 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
                 append_success, append_error = append_keys_to_files(output_key, output_k4i, temp_key, temp_k4i)
                 if not append_success:
                     print_warn(f" (Warning: Failed to append keys - {append_error})")
+                
+                # Update history with successfully processed book
+                append_to_history(script_dir, asin)
                 
                 # Cleanup temp files
                 try:
@@ -1275,6 +1430,10 @@ def display_config_summary(config):
     # Skip Phase Pauses
     skip_pauses = "Yes" if config.get('skip_phase_pauses', False) else "No"
     print(f"│ Skip Phase Pauses           │ {skip_pauses:<72} │")
+    
+    # Auto-Launch Kindle
+    auto_launch = "Yes" if config.get('auto_launch_kindle', False) else "No"
+    print(f"│ Auto-Launch Kindle          │ {auto_launch:<72} │")
     
     # Calibre Import section
     if 'calibre_import' in config:
@@ -1685,11 +1844,51 @@ def configure_pre_flight_wizard(user_home):
     clear_status = "Yes" if config['clear_screen_between_phases'] else "No"
     print_ok(f"✓ [4/6] Clear Screen Between Phases: {clear_status}")
     skip_pauses_status = "Yes" if config['skip_phase_pauses'] else "No"
-    print_ok(f"✓ [5/6] Skip Phase Pauses: {skip_pauses_status}")
+    print_ok(f"✓ [5/7] Skip Phase Pauses: {skip_pauses_status}")
+    print()
+
+    # 6. Auto-Launch Kindle
+    print_step("[6/7] Auto-Launch Kindle")
+    print("--------------------------------------------------")
+    print("Would you like to automatically launch Kindle.exe?")
+    print("(Script will wait for Kindle to close before scanning for books)")
     print()
     
-    # 6. Calibre Import Settings
-    print_step("[6/6] Calibre Auto-Import")
+    while True:
+        choice = input("Enable Auto-Launch Kindle? (Y/N) [Y]: ").strip().upper()
+        if choice == '':
+            choice = 'Y'  # Default to No (keep pauses)
+        if choice in ['Y', 'N']:
+            config['auto_launch_kindle'] = (choice == 'Y')  # type: ignore
+            print()
+            break
+        else:
+            print_error("Please enter Y or N")
+            print()
+    
+    # Clear console before next question
+    os.system('cls')
+    print()
+    print_banner_and_version()
+    print("=" * 70)
+    print_step("PRE-FLIGHT CONFIGURATION WIZARD")
+    print("=" * 70)
+    print()
+    print_ok(f"✓ [1/7] Kindle Content Path: {config['kindle_content_path']}")
+    hide_status = "Yes" if config['hide_sensitive_info'] else "No"
+    print_ok(f"✓ [2/7] Hide Sensitive Info: {hide_status}")
+    fetch_status = "Yes" if config['fetch_book_titles'] else "No"
+    print_ok(f"✓ [3/7] Fetch Book Titles: {fetch_status}")
+    clear_status = "Yes" if config['clear_screen_between_phases'] else "No"
+    print_ok(f"✓ [4/7] Clear Screen Between Phases: {clear_status}")
+    skip_pauses_status = "Yes" if config['skip_phase_pauses'] else "No"
+    print_ok(f"✓ [5/7] Skip Phase Pauses: {skip_pauses_status}")
+    auto_launch_status = "Yes" if config['auto_launch_kindle'] else "No"
+    print_ok(f"✓ [6/7] Auto-Launch Kindle: {auto_launch_status}")
+    print()
+
+    # 7. Calibre Import Settings
+    print_step("[7/7] Calibre Auto-Import")
     print("--------------------------------------------------")
     print("Enable automatic import of DeDRMed ebooks to Calibre?")
     print("(You can configure this later if you skip now)")
@@ -3400,12 +3599,24 @@ def attempt_calibre_import(content_dir, script_dir, calibre_already_confirmed=Fa
                 print()
                 return 0
         
-        # Extract list of failed ASINs from extraction stats
+        # Extract list of failed AND skipped ASINs from extraction stats
         exclude_asins = []
-        if extraction_stats and extraction_stats.get('failed_books'):
-            exclude_asins = [asin for asin, _, _ in extraction_stats['failed_books']]
+        if extraction_stats:
+            # Add failed books
+            if extraction_stats.get('failed_books'):
+                exclude_asins.extend([asin for asin, _, _ in extraction_stats['failed_books']])
+            # Add skipped books (previously processed)
+            if extraction_stats.get('skipped_books'):
+                exclude_asins.extend([asin for asin, _, _ in extraction_stats['skipped_books']])
+            
             if exclude_asins:
-                print_warn(f"Excluding {len(exclude_asins)} book(s) that failed key extraction from import")
+                failed_count = len(extraction_stats.get('failed_books', []))
+                skipped_count = len(extraction_stats.get('skipped_books', []))
+                print_warn(f"Excluding {len(exclude_asins)} book(s) from import:")
+                if failed_count > 0:
+                    print(f"      - {failed_count} failed key extraction")
+                if skipped_count > 0:
+                    print(f"      - {skipped_count} previously processed (skipped)")
                 print()
         
         # Phase 3a: Optional cleanup of KFX-ZIP books
@@ -3601,6 +3812,47 @@ def main():
             default_content_dir = os.path.join(user_home, "Documents", "My Kindle Content")
             content_dir = get_kindle_content_path(default_content_dir)
         
+        # === AUTO-LAUNCH KINDLE (if enabled) ===
+        if saved_config.get('auto_launch_kindle', False):
+            # Clear screen if configured
+            if saved_config.get('clear_screen_between_phases', True):
+                os.system('cls')
+            
+            print()
+            print_colored("═" * 70, 'cyan')
+            print_colored(f"║{'AUTO-LAUNCH KINDLE':^68}║", 'cyan')
+            print_colored("═" * 70, 'cyan')
+            print()
+            
+            # Launch Kindle and wait for it to close
+            success, error_msg = launch_and_wait_for_kindle()
+            
+            if not success:
+                print_error(f"Failed to launch Kindle: {error_msg}")
+                print_warn("Continuing with key extraction anyway...")
+                print()
+            
+            # Scan for books after Kindle closes
+            print_step("Scanning for downloaded books...")
+            book_folders = scan_kindle_content_directory(content_dir)
+            
+            if not book_folders:
+                print_error("No books detected in Kindle content directory!")
+                print()
+                print_warn("Please ensure you have downloaded books in Kindle before running this script.")
+                print(f"Content directory: {content_dir}")
+                print()
+                print("Script will now exit.")
+                input("Press Enter to exit...")
+                return 1
+            
+            print_ok(f"Found {len(book_folders)} book(s) ready for processing")
+            print()
+            
+            # Pause before continuing
+            print_step("Continuing to key extraction in 3 seconds...")
+            time.sleep(3)
+        
         # === PHASE 1: KEY EXTRACTION ===
         # Clear screen if configured
         if saved_config.get('clear_screen_between_phases', True):
@@ -3672,6 +3924,9 @@ def main():
             f"Generated kindlekey.k4i at {output_k4i}",
             "Kindle auto-update prevention configured"
         ]
+        
+        if extraction_stats.get('skipped', 0) > 0:
+            summary_points.append(f"Skipped: {extraction_stats['skipped']} book(s) previously processed")
         
         if extraction_stats['failed'] > 0:
             summary_points.append(f"Failed extractions: {extraction_stats['failed']} book(s) - see log for details")
@@ -3869,13 +4124,25 @@ def main():
             print(f"  + Converted and merged {converted_count} ebook(s) to EPUB format")
         
         # Show extraction issues if any
-        if extraction_stats and extraction_stats.get('failed', 0) > 0:
+        if extraction_stats and (extraction_stats.get('skipped', 0) > 0 or extraction_stats.get('failed', 0) > 0):
             print()
-            print_warn(f"Extraction Issues: {extraction_stats['failed']} book(s) failed key extraction")
-            if extraction_stats.get('failed_books'):
-                print("      Failed books:")
-                for asin, title, error_msg in extraction_stats['failed_books']:
-                    print(f"        - {asin} - {title}")
+            if extraction_stats.get('skipped', 0) > 0:
+                print_warn(f"Extraction Skipped: {extraction_stats['skipped']} book(s) previously processed")
+                if extraction_stats.get('skipped_books'):
+                    print("      Skipped books:")
+                    for asin, title, _ in extraction_stats['skipped_books'][:5]:
+                        print(f"        - {asin} - {title}")
+                    if len(extraction_stats['skipped_books']) > 5:
+                        print(f"        ... and {len(extraction_stats['skipped_books']) - 5} more")
+            
+            if extraction_stats.get('failed', 0) > 0:
+                if extraction_stats.get('skipped', 0) > 0:
+                    print()  # Add spacing between skipped and failed sections
+                print_warn(f"Extraction Issues: {extraction_stats['failed']} book(s) failed key extraction")
+                if extraction_stats.get('failed_books'):
+                    print("      Failed books:")
+                    for asin, title, error_msg in extraction_stats['failed_books']:
+                        print(f"        - {asin} - {title}")
         
         # Show import/conversion issues if any
         if import_results and isinstance(import_results, dict):
