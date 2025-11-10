@@ -1151,8 +1151,9 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
             action = prompt_history_action(len(book_folders), len(previously_processed))
             
             if action == 'quit':
-                print_warn("Script cancelled by user")
-                return False, None, None, extraction_stats
+                # User chose to quit - exit gracefully without errors
+                print()
+                return 0
             elif action == 'new':
                 # Track which books are being skipped due to history
                 skipped = [(asin, title, "Previously processed") 
@@ -1548,7 +1549,7 @@ def prompt_config_action_with_timer(config):
     
     # Check if pauses should be skipped to adjust countdown time
     skip_pauses = config.get('skip_phase_pauses', False)
-    countdown_seconds = 3 if skip_pauses else 10
+    countdown_seconds = 3 if skip_pauses else 5
     
     print(f"Press any key to show options, or wait {countdown_seconds} seconds to use saved configuration...")
     print()
@@ -3878,7 +3879,13 @@ def main():
         print("--------------------------------------------------")
         print()
         
-        success, dsn, tokens, extraction_stats = extract_keys_using_extractor(extractor, content_dir, output_key, output_k4i)
+        result = extract_keys_using_extractor(extractor, content_dir, output_key, output_k4i)
+        
+        # Check if user quit during extraction
+        if result == 0:
+            return 0
+        
+        success, dsn, tokens, extraction_stats = result
         
         print("--------------------------------------------------")
         print()
@@ -3899,6 +3906,12 @@ def main():
                     if len(extraction_stats['failed_books']) > 5:
                         print(f"  ... and {len(extraction_stats['failed_books']) - 5} more")
                 return 1
+        
+        # Check if no books were processed (all previously processed scenario)
+        if success and extraction_stats['success'] == 0 and extraction_stats.get('skipped', 0) > 0:
+            print_ok("All books have been previously processed - script completed successfully")
+            print()
+            return 0
         
         # Display extraction results
         print_ok("Keys successfully extracted:")
