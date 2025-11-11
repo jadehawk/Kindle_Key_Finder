@@ -268,6 +268,19 @@ This tool is intended for use with ebooks you have legally purchased. Users are 
 
 ## Version History
 
+**Version 2025.11.11.JH**
+
+Kindle Process Monitoring Fix:
+
+- Fixed Kindle.exe monitoring issue in auto-launch feature
+- Added `is_kindle_running()` function to detect if Kindle is already running
+- Updated `launch_and_wait_for_kindle()` to handle both scenarios:
+  - Kindle already running: Detects existing process and waits for closure
+  - Kindle not running: Launches Kindle.exe and waits for closure
+- Implemented polling mechanism (checks every 2 seconds) for reliable process monitoring
+- Uses Windows-native `tasklist` command (no external dependencies)
+- Handles both pre-existing and newly launched Kindle processes consistently
+
 **Version 2025.11.09.JH**
 
 Auto-Launch Kindle & Book History Tracking:

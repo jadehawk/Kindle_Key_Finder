@@ -8,7 +8,7 @@ No external dependencies - uses the same methods as the plugin
 """
 
 # Script Version
-SCRIPT_VERSION = "2025.11.09.JH"
+SCRIPT_VERSION = "2025.11.11.JH"
 
 # Unified Configuration File
 CONFIG_FILE = "key_finder_config.json"
@@ -540,38 +540,53 @@ def find_kindle_exe():
 def launch_and_wait_for_kindle():
     """
     Launch Kindle.exe and wait for it to close
+    Detects if Kindle is already running and monitors accordingly
     Returns: (success: bool, error_message: str)
     """
     try:
-        # Find Kindle.exe location
-        kindle_dir, _ = find_kindle_exe()
+        # Check if Kindle is already running
+        already_running = is_kindle_running()
         
-        if not kindle_dir:
-            return False, "Kindle.exe not found. Please install Kindle for PC."
+        if already_running:
+            print_warn("Kindle is already running")
+            print()
+            print_warn("Please use Kindle to download any books you want to process")
+            print_warn("When finished, close Kindle to continue with key extraction")
+            print()
+            print_step("Waiting for Kindle to close...")
+            print("  (Script will automatically continue when Kindle exits)")
+            print()
+        else:
+            # Find Kindle.exe location
+            kindle_dir, _ = find_kindle_exe()
+            
+            if not kindle_dir:
+                return False, "Kindle.exe not found. Please install Kindle for PC."
+            
+            kindle_exe = os.path.join(kindle_dir, "Kindle.exe")
+            
+            if not os.path.exists(kindle_exe):
+                return False, f"Kindle.exe not found at: {kindle_exe}"
+            
+            print_step("Launching Kindle.exe...")
+            print(f"  Location: {kindle_exe}")
+            print()
+            
+            # Launch Kindle
+            subprocess.Popen([kindle_exe])
+            
+            print_ok("Kindle launched successfully")
+            print()
+            print_warn("Please use Kindle to download any books you want to process")
+            print_warn("When finished, close Kindle to continue with key extraction")
+            print()
+            print_step("Waiting for Kindle to close...")
+            print("  (Script will automatically continue when Kindle exits)")
+            print()
         
-        kindle_exe = os.path.join(kindle_dir, "Kindle.exe")
-        
-        if not os.path.exists(kindle_exe):
-            return False, f"Kindle.exe not found at: {kindle_exe}"
-        
-        print_step("Launching Kindle.exe...")
-        print(f"  Location: {kindle_exe}")
-        print()
-        
-        # Launch Kindle
-        process = subprocess.Popen([kindle_exe])
-        
-        print_ok("Kindle launched successfully")
-        print()
-        print_warn("Please use Kindle to download any books you want to process")
-        print_warn("When finished, close Kindle to continue with key extraction")
-        print()
-        print_step("Waiting for Kindle to close...")
-        print("  (Script will automatically continue when Kindle exits)")
-        print()
-        
-        # Wait for process to exit
-        process.wait()
+        # Poll for Kindle process closure (works for both launched and already-running)
+        while is_kindle_running():
+            time.sleep(2)  # Check every 2 seconds
         
         print_ok("Kindle closed - continuing with script")
         print()
@@ -579,7 +594,7 @@ def launch_and_wait_for_kindle():
         return True, ""
         
     except Exception as e:
-        return False, f"Failed to launch Kindle: {str(e)}"
+        return False, f"Failed to launch/monitor Kindle: {str(e)}"
 
 def create_temp_kindle_copy(source_dir):
     """
@@ -2853,6 +2868,29 @@ def display_import_results(results):
             print(f"      {results['log_file']}")
     
     print()
+
+def is_kindle_running():
+    """
+    Check if Kindle.exe is currently running on Windows
+    Returns: True if Kindle is running, False otherwise
+    """
+    try:
+        # Run tasklist command to check for Kindle.exe
+        result = subprocess.run(
+            ['tasklist', '/FI', 'IMAGENAME eq Kindle.exe'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        
+        # Check if Kindle.exe is in the output
+        output_lower = result.stdout.lower()
+        return 'kindle.exe' in output_lower
+        
+    except Exception as e:
+        # If detection fails, assume Kindle might be running (safer approach)
+        print_warn(f"Could not detect Kindle process: {e}")
+        return True
 
 def is_calibre_running():
     """
