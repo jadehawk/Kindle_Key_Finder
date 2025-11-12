@@ -371,16 +371,23 @@ def cleanup_temp_kindle():
             print_warn("You may need to manually delete: " + temp_kindle_dir)
         print()
 
-def cleanup_temp_extraction(silent=False):
+def cleanup_temp_extraction(silent=False, working_dir=None):
     """
     Check for and cleanup any leftover temp_extraction folder
     from previous failed runs
     
     Args:
         silent: If True, don't print messages (for use during extraction)
+        working_dir: Directory to check for temp_extraction (respects fallback paths)
     """
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    temp_extraction_dir = os.path.join(script_dir, "temp_extraction")
+    if working_dir is None:
+        # Determine working_dir if not provided
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        user_home = os.path.expanduser("~")
+        can_write, _ = check_write_permissions(script_dir)
+        working_dir = script_dir if can_write else os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
+    
+    temp_extraction_dir = os.path.join(working_dir, "temp_extraction")
     
     if os.path.exists(temp_extraction_dir):
         if not silent:
@@ -716,12 +723,13 @@ def fetch_book_title_from_asin(asin):
         # If command fails, return ASIN
         return asin
 
-def load_book_history(script_dir):
+def load_book_history(working_dir):
     """
     Load book processing history from history.txt
+    Uses working_dir which respects fallback paths
     Returns: set of ASINs that have been previously processed
     """
-    history_file = os.path.join(script_dir, "history.txt")
+    history_file = os.path.join(working_dir, "history.txt")
     processed_asins = set()
     
     try:
@@ -739,13 +747,17 @@ def load_book_history(script_dir):
     
     return processed_asins
 
-def append_to_history(script_dir, asin):
+def append_to_history(working_dir, asin):
     """
     Append ASIN to history.txt after successful extraction
+    Uses working_dir which respects fallback paths
     """
-    history_file = os.path.join(script_dir, "history.txt")
+    history_file = os.path.join(working_dir, "history.txt")
     
     try:
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(history_file), exist_ok=True)
+        
         with open(history_file, 'a', encoding='utf-8') as f:
             f.write(f"{asin}\n")
     except Exception as e:
@@ -836,13 +848,23 @@ def scan_kindle_content_directory(content_dir):
         print_error(f"Error scanning content directory: {e}")
         return []
 
-def extract_keys_from_single_book(extractor_path, kindle_dir, book_folder, output_key, output_k4i, asin, book_title):
+def extract_keys_from_single_book(extractor_path, kindle_dir, book_folder, output_key, output_k4i, asin, book_title, working_dir=None):
     """
     Extract keys from a single book folder using temporary directory workaround
     Returns: (success: bool, dsn: str, tokens: str, error_msg: str, asin: str)
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    temp_dir = os.path.join(script_dir, "temp_extraction")
+    user_home = os.path.expanduser("~")
+    
+    # Use working_dir if provided, otherwise determine it
+    if working_dir is None:
+        can_write, _ = check_write_permissions(script_dir)
+        if can_write:
+            working_dir = script_dir
+        else:
+            working_dir = os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
+    
+    temp_dir = os.path.join(working_dir, "temp_extraction")
     
     try:
         # Copy extractor to Kindle folder if not already there
@@ -1051,13 +1073,14 @@ def append_keys_to_files(output_key, output_k4i, temp_key, temp_k4i):
     except Exception as e:
         return False, str(e)
 
-def write_extraction_log(extraction_stats, script_dir):
+def write_extraction_log(extraction_stats, working_dir):
     """
     Write detailed extraction log to file
+    Uses working_dir which respects fallback paths
     Returns: log file path
     """
     # Create logs directory with extraction subfolder
-    logs_dir = os.path.join(script_dir, "Logs", "extraction_logs")
+    logs_dir = os.path.join(working_dir, "Logs", "extraction_logs")
     os.makedirs(logs_dir, exist_ok=True)
     
     # Create timestamped log file
@@ -1108,7 +1131,7 @@ def write_extraction_log(extraction_stats, script_dir):
         print_warn(f"Failed to write extraction log file: {e}")
         return None
 
-def extract_keys_using_extractor(extractor_path, content_dir, output_key, output_k4i):
+def extract_keys_using_extractor(extractor_path, content_dir, output_key, output_k4i, working_dir=None):
     """
     Extract keys using the KFXKeyExtractor28.exe with per-book processing
     Returns: (success: bool, dsn: str, tokens: str, extraction_stats: dict)
@@ -1121,6 +1144,15 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
     
     temp_copy_created = False
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    user_home = os.path.expanduser("~")
+    
+    # Use provided working_dir or determine it
+    if working_dir is None:
+        can_write, _ = check_write_permissions(script_dir)
+        if can_write:
+            working_dir = script_dir
+        else:
+            working_dir = os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
     
     # Initialize extraction statistics
     extraction_stats = {
@@ -1156,7 +1188,7 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
         print()
         
         # Load book history
-        processed_asins = load_book_history(script_dir)
+        processed_asins = load_book_history(working_dir)
         
         # Check if any books were previously processed
         previously_processed = [asin for asin, _, _ in book_folders if asin in processed_asins]
@@ -1215,9 +1247,9 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
                 # Display: folder_name only
                 print(f"[{idx}/{len(book_folders)}] {folder_name}...", end=' ', flush=True)
             
-            # Extract keys from single book
+            # Extract keys from single book (pass validated working_dir)
             success, book_dsn, book_tokens, error_msg, _ = extract_keys_from_single_book(
-                extractor_path, kindle_dir, book_folder, temp_key, temp_k4i, asin, book_title
+                extractor_path, kindle_dir, book_folder, temp_key, temp_k4i, asin, book_title, working_dir=working_dir
             )
             
             if success:
@@ -1236,7 +1268,7 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
                     print_warn(f" (Warning: Failed to append keys - {append_error})")
                 
                 # Update history with successfully processed book
-                append_to_history(script_dir, asin)
+                append_to_history(working_dir, asin)
                 
                 # Cleanup temp files
                 try:
@@ -1264,7 +1296,7 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
         
         # Write extraction log if there were failures
         if extraction_stats['failed'] > 0:
-            log_file = write_extraction_log(extraction_stats, script_dir)
+            log_file = write_extraction_log(extraction_stats, working_dir)
             if log_file:
                 print_step(f"Extraction error log saved to:")
                 print(f"      {log_file}")
@@ -1354,33 +1386,540 @@ def create_dedrm_config(kindle_key, kindlekey_txt_path, reference_json_path=None
 # UNIFIED CONFIGURATION FUNCTIONS
 # ============================================================================
 
+# ============================================================================
+# WRITE PERMISSIONS & PATH DISCOVERY FUNCTIONS
+# ============================================================================
+
+def check_write_permissions(directory):
+    """
+    Test if we can write to a directory
+    Returns: (can_write: bool, error_msg: str or None)
+    """
+    test_file = os.path.join(directory, ".write_test_temp")
+    try:
+        with open(test_file, 'w') as f:
+            f.write("test")
+        os.remove(test_file)
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+def get_fallback_paths(user_home):
+    """
+    Generate fallback paths in %APPDATA% when script dir is not writable
+    Returns: dict with all necessary paths
+    """
+    appdata_base = os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
+    
+    return {
+        'base_dir': appdata_base,
+        'keys_dir': os.path.join(appdata_base, "Keys"),
+        'logs_dir': os.path.join(appdata_base, "Logs"),
+        'backups_dir': os.path.join(appdata_base, "backups"),
+        'temp_extraction_dir': os.path.join(appdata_base, "temp_extraction"),
+        'config_file': os.path.join(appdata_base, "key_finder_config.json"),
+        'history_file': os.path.join(appdata_base, "history.txt")
+    }
+
+def discover_config_location(script_dir, user_home):
+    """
+    Discover which location has the config file and which is writable
+    Returns: (config_path, working_dir, needs_migration, is_fallback)
+    
+    Priority logic:
+    1. If script_dir is writable AND has config → use script_dir
+    2. If script_dir is writable but no config, check fallback → migrate if found
+    3. If script_dir NOT writable, use fallback (migrate if needed)
+    """
+    fallback_base = os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
+    fallback_config = os.path.join(fallback_base, "key_finder_config.json")
+    script_config = os.path.join(script_dir, "key_finder_config.json")
+    
+    # Check if script_dir is writable
+    can_write, error = check_write_permissions(script_dir)
+    
+    if can_write:
+        # Script dir is writable - prefer it
+        
+        # Priority 1: Config exists in script_dir → use it
+        if os.path.exists(script_config):
+            return script_config, script_dir, False, False
+        
+        # Priority 2: Config exists in fallback → migrate to script_dir
+        if os.path.exists(fallback_config):
+            return fallback_config, script_dir, True, False
+        
+        # Priority 3: No config found → create in script_dir
+        return script_config, script_dir, False, False
+    else:
+        # Script dir NOT writable - must use fallback
+        
+        # Priority 1: Config exists in fallback → use it
+        if os.path.exists(fallback_config):
+            return fallback_config, fallback_base, False, True
+        
+        # Priority 2: Config exists in script_dir → migrate to fallback
+        if os.path.exists(script_config):
+            return script_config, fallback_base, True, True
+        
+        # Priority 3: No config found → create in fallback
+        return fallback_config, fallback_base, False, True
+
+def create_location_marker(working_dir, script_dir):
+    """
+    Create _LOCATION_INFO.txt file to help users find their files
+    """
+    marker_path = os.path.join(working_dir, "_LOCATION_INFO.txt")
+    
+    try:
+        with open(marker_path, 'w', encoding='utf-8') as f:
+            f.write("=" * 70 + "\n")
+            f.write("KINDLE KEY FINDER - FILE LOCATION NOTICE\n")
+            f.write("=" * 70 + "\n\n")
+            
+            f.write(f"Created: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+            
+            f.write("WHY ARE FILES HERE?\n")
+            f.write("-" * 70 + "\n")
+            f.write("The script detected that your original script location is not writable.\n")
+            f.write("This commonly occurs when running from:\n")
+            f.write("  • Network drives\n")
+            f.write("  • Read-only folders\n")
+            f.write("  • Restricted permissions locations\n\n")
+            
+            f.write(f"Original script location: {script_dir}\n")
+            f.write(f"Current working location: {working_dir}\n\n")
+            
+            f.write("WHAT FILES ARE STORED HERE?\n")
+            f.write("-" * 70 + "\n")
+            f.write("  • Configuration file (key_finder_config.json)\n")
+            f.write("  • Extracted keys (Keys/kindlekey.txt, Keys/kindlekey.k4i)\n")
+            f.write("  • Processing logs (Logs/extraction_logs/, conversion_logs/, etc.)\n")
+            f.write("  • Book history (history.txt)\n")
+            f.write("  • Backups (backups/dedrm_backup_*.json)\n\n")
+            
+            f.write("THIS IS NORMAL AND SAFE\n")
+            f.write("-" * 70 + "\n")
+            f.write("Your files are safely stored in your Windows AppData Local folder.\n")
+            f.write("This is a standard location for application data and is backed up\n")
+            f.write("with your user profile.\n\n")
+            
+            f.write("TO ACCESS FILES:\n")
+            f.write("-" * 70 + "\n")
+            f.write("1. Press Win+R to open Run dialog\n")
+            f.write("2. Type: %LOCALAPPDATA%\\Kindle_Key_Finder\n")
+            f.write("3. Press Enter\n\n")
+            
+            f.write("=" * 70 + "\n")
+        
+        print_ok(f"Location info file created: _LOCATION_INFO.txt")
+        
+    except Exception as e:
+        print_warn(f"Could not create location marker: {e}")
+
+def migrate_config_to_fallback(source_config, dest_config, script_dir, fallback_base):
+    """
+    Migrate config and related files from script_dir to fallback location
+    Also creates _LOCATION_INFO.txt marker
+    """
+    try:
+        # Ensure fallback directory exists
+        os.makedirs(os.path.dirname(dest_config), exist_ok=True)
+        
+        print_step("Migrating configuration to AppData...")
+        
+        # Copy config file
+        if os.path.exists(source_config):
+            shutil.copy2(source_config, dest_config)
+            print_ok(f"Config migrated: {os.path.basename(dest_config)}")
+        
+        # Migrate other files if they exist
+        files_to_migrate = [
+            ('history.txt', 'History file'),
+            ('Keys/kindlekey.txt', 'Kindle key'),
+            ('Keys/kindlekey.k4i', 'Kindle account data')
+        ]
+        
+        for rel_path, description in files_to_migrate:
+            source_file = os.path.join(script_dir, rel_path)
+            dest_file = os.path.join(fallback_base, rel_path)
+            
+            if os.path.exists(source_file):
+                os.makedirs(os.path.dirname(dest_file), exist_ok=True)
+                shutil.copy2(source_file, dest_file)
+                print_ok(f"{description} migrated")
+        
+        # Create location marker file
+        create_location_marker(fallback_base, script_dir)
+        
+        print()
+        print_ok("Migration completed successfully")
+        print()
+        
+        return True
+        
+    except Exception as e:
+        print_error(f"Migration failed: {e}")
+        print_warn("Will attempt to use fallback location without migration")
+        return False
+
+# ============================================================================
+# COMPONENT VALIDATION FUNCTIONS
+# ============================================================================
+
+def get_calibre_plugins_dir():
+    """Get Calibre plugins directory path"""
+    user_home = os.path.expanduser("~")
+    return os.path.join(user_home, "AppData", "Roaming", "calibre", "plugins")
+
+def check_plugin_installed(plugin_name):
+    """
+    Check if a Calibre plugin is installed
+    Returns: True if plugin exists, False otherwise
+    """
+    plugins_dir = get_calibre_plugins_dir()
+    plugin_path = os.path.join(plugins_dir, f"{plugin_name}.zip")
+    return os.path.exists(plugin_path)
+
+def check_calibre_installed():
+    """
+    Check if Calibre is installed by testing calibredb command
+    Returns: True if Calibre is installed, False otherwise
+    """
+    try:
+        result = subprocess.run(
+            ['calibredb', '--version'],
+            capture_output=True,
+            timeout=5
+        )
+        return result.returncode == 0
+    except:
+        return False
+
+def check_extractor_exists(script_dir):
+    """
+    Check if KFXKeyExtractor28.exe exists in script directory
+    Returns: (exists: bool, extractor_path: str)
+    """
+    extractor_path = os.path.join(script_dir, "KFXKeyExtractor28.exe")
+    return (os.path.exists(extractor_path), extractor_path)
+
+def validate_kindle_installation():
+    """
+    Check if Kindle for PC is installed
+    Returns: (is_installed: bool, kindle_path: str or None)
+    """
+    kindle_dir, _ = find_kindle_exe()
+    return (kindle_dir is not None, kindle_dir)
+
+def validate_all_requirements(script_dir, user_home):
+    """
+    Comprehensive validation of all requirements
+    Returns: validation_report dict
+    """
+    report = {
+        'write_permissions': False,
+        'working_dir': None,
+        'is_fallback': False,
+        'fallback_reason': None,
+        'extractor_installed': False,
+        'extractor_path': None,
+        'kindle_installed': False,
+        'kindle_path': None,
+        'calibre_installed': False,
+        'kfx_plugin_installed': False,
+        'dedrm_plugin_installed': False,
+        'all_critical_met': False,
+        'warnings': []
+    }
+    
+    # 1. Check write permissions & discover config location (critical)
+    config_path, working_dir, needs_migration, is_fallback = discover_config_location(script_dir, user_home)
+    report['write_permissions'] = True  # If we get here, we have SOMEWHERE to write
+    report['working_dir'] = working_dir
+    report['is_fallback'] = is_fallback
+    
+    if is_fallback:
+        can_write, error = check_write_permissions(script_dir)
+        report['fallback_reason'] = f"Script directory not writable: {error}"
+    
+    # 2. Check for KFXKeyExtractor28.exe (CRITICAL - needed for Phase 1)
+    extractor_ok, extractor_path = check_extractor_exists(script_dir)
+    report['extractor_installed'] = extractor_ok
+    report['extractor_path'] = extractor_path
+    if not extractor_ok:
+        report['warnings'].append({
+            'component': 'KFXKeyExtractor28.exe',
+            'severity': 'CRITICAL',
+            'impact': 'Cannot extract keys (Phase 1 will fail immediately)',
+            'error_example': 'File not found: KFXKeyExtractor28.exe',
+            'install_url': 'https://github.com/Satsuoni/DeDRM_tools'
+        })
+    
+    # 3. Check Kindle (critical for Phase 1)
+    kindle_ok, kindle_path = validate_kindle_installation()
+    report['kindle_installed'] = kindle_ok
+    report['kindle_path'] = kindle_path
+    if not kindle_ok:
+        report['warnings'].append({
+            'component': 'Kindle for PC',
+            'severity': 'CRITICAL',
+            'impact': 'Cannot extract keys (Phase 1 will fail)',
+            'install_url': 'https://www.amazon.com/kindle-dbs/fd/kcp'
+        })
+    
+    # 4. Check Calibre (critical for Phases 3-4)
+    calibre_ok = check_calibre_installed()
+    report['calibre_installed'] = calibre_ok
+    if not calibre_ok:
+        report['warnings'].append({
+            'component': 'Calibre',
+            'severity': 'WARNING',
+            'impact': 'Cannot import/convert books (Phases 3-4 will be skipped)',
+            'install_url': 'https://calibre-ebook.com/download'
+        })
+    
+    # 5 & 6. Check plugins (only if Calibre is installed)
+    if calibre_ok:
+        kfx_ok = check_plugin_installed('KFX Input')
+        dedrm_ok = check_plugin_installed('DeDRM')
+        
+        report['kfx_plugin_installed'] = kfx_ok
+        report['dedrm_plugin_installed'] = dedrm_ok
+        
+        if not kfx_ok:
+            report['warnings'].append({
+                'component': 'KFX Input Plugin',
+                'severity': 'WARNING',
+                'impact': 'KFX books cannot be converted (will fail during conversion)',
+                'error_example': 'This is an Amazon KFX book. It cannot be processed.',
+                'install_url': 'https://www.mobileread.com/forums/showthread.php?t=283371'
+            })
+        
+        if not dedrm_ok:
+            report['warnings'].append({
+                'component': 'DeDRM Plugin',
+                'severity': 'WARNING',
+                'impact': 'Imported books will remain DRM-protected',
+                'error_example': 'Book has DRM and cannot be converted',
+                'install_url': 'https://github.com/Satsuoni/DeDRM_tools'
+            })
+    
+    # Determine if critical requirements are met (both extractor AND Kindle required)
+    report['all_critical_met'] = extractor_ok and kindle_ok
+    
+    return report
+
+def display_validation_results(report):
+    """
+    Display validation results with color-coded warnings
+    Returns: True if user wants to continue, False to exit
+    """
+    print_step("Pre-Flight System Validation")
+    print("=" * 70)
+    print()
+    
+    # Validation Results Table
+    print("┌────────────────────────────────┬────────────┬────────────────────────────────────────┐")
+    print("│ Component                      │ Status     │ Details                                │")
+    print("├────────────────────────────────┼────────────┼────────────────────────────────────────┤")
+    
+    # Row 1: Write Permissions
+    if report['is_fallback']:
+        status = "⚠ Fallback"
+        details = "Using AppData location"
+    else:
+        status = "✓ OK"
+        details = "Script directory writable"
+    print(f"│ Write Permissions              │ {status:<10} │ {details:<38} │")
+    
+    # Row 2: KFXKeyExtractor28.exe
+    if report['extractor_installed']:
+        status = "✓ Found"
+        details = "Required for Phase 1"
+    else:
+        status = "✗ Missing"
+        details = "CRITICAL - Phase 1 will fail"
+    print(f"│ KFXKeyExtractor28.exe          │ {status:<10} │ {details:<38} │")
+    
+    # Row 3: Kindle for PC
+    if report['kindle_installed']:
+        status = "✓ Found"
+        # Truncate path if too long
+        path_display = os.path.basename(report['kindle_path']) if report['kindle_path'] else "Installed"
+        if len(path_display) > 38:
+            path_display = path_display[:35] + "..."
+        details = path_display
+    else:
+        status = "✗ Missing"
+        details = "CRITICAL - Phase 1 will fail"
+    print(f"│ Kindle for PC                  │ {status:<10} │ {details:<38} │")
+    
+    # Row 4: Calibre
+    if report['calibre_installed']:
+        status = "✓ Found"
+        details = "Required for Phases 3-4"
+    else:
+        status = "✗ Missing"
+        details = "Phases 3-4 will be skipped"
+    print(f"│ Calibre                        │ {status:<10} │ {details:<38} │")
+    
+    # Row 5: KFX Input Plugin
+    if report['kfx_plugin_installed']:
+        status = "✓ Found"
+        details = "Converts KFX books"
+    else:
+        status = "✗ Missing"
+        details = "KFX conversion will fail"
+    print(f"│ KFX Input Plugin               │ {status:<10} │ {details:<38} │")
+    
+    # Row 6: DeDRM Plugin
+    if report['dedrm_plugin_installed']:
+        status = "✓ Found"
+        details = "Removes DRM protection"
+    else:
+        status = "✗ Missing"
+        details = "Books will remain DRM-protected"
+    print(f"│ DeDRM Plugin                   │ {status:<10} │ {details:<38} │")
+    
+    # Table footer
+    print("└────────────────────────────────┴────────────┴────────────────────────────────────────┘")
+    print()
+    
+    # Show fallback location details if applicable
+    if report['is_fallback']:
+        print_warn("Note: Using fallback location due to write permission issues")
+        print(f"   Working directory: {report['working_dir']}")
+        print()
+    
+    # Display warnings if any
+    if report['warnings']:
+        print("=" * 70)
+        print_warn(f"VALIDATION WARNINGS ({len(report['warnings'])})")
+        print("=" * 70)
+        print()
+        
+        for warning in report['warnings']:
+            severity_color = 'red' if warning['severity'] == 'CRITICAL' else 'yellow'
+            print_colored(f"[{warning['severity']}] {warning['component']}", severity_color)
+            print(f"   Impact: {warning['impact']}")
+            if 'error_example' in warning:
+                print(f"   Typical Error: \"{warning['error_example']}\"")
+            print(f"   Install from: {warning['install_url']}")
+            print()
+    
+    # Ask user to continue or exit
+    if not report['all_critical_met']:
+        print_error("CRITICAL COMPONENTS MISSING!")
+        
+        # Build list of missing critical components
+        missing_critical = []
+        if not report['extractor_installed']:
+            missing_critical.append("KFXKeyExtractor28.exe")
+        if not report['kindle_installed']:
+            missing_critical.append("Kindle for PC")
+        
+        if len(missing_critical) == 1:
+            print(f"The script cannot proceed without {missing_critical[0]}.")
+        else:
+            print(f"The script cannot proceed without: {', '.join(missing_critical)}.")
+        print()
+        return False
+    
+    if report['warnings']:
+        print_warn("Some components are missing. Script can continue but will most likely fail.")
+        print()
+        print("Options:")
+        print("  [C] Continue - Proceed with warnings (will most likely fail during import/conversion)")
+        print("  [Q] Quit - Exit and install missing components")
+        print()
+        
+        while True:
+            choice = input("Your choice (C/Q) [Q]: ").strip().upper()
+            if choice == '':
+                choice = 'Q' #Default to Quit Script
+            if choice == 'C':
+                print()
+                print_ok("Continuing with warnings...")
+                print()
+                return True
+            elif choice == 'Q':
+                print()
+                print_warn("Script cancelled - please install missing components")
+                print()
+                return False
+            else:
+                print_error("Invalid choice. Please enter C or Q.")
+    
+    # All components present
+    print_ok("All components validated successfully!")
+    print()
+    return True
+
+# ============================================================================
+# UNIFIED CONFIGURATION FUNCTIONS
+# ============================================================================
+
 def load_config():
     """
     Load unified configuration from JSON file
+    Checks both script directory and fallback AppData location
     Returns dict or None if file doesn't exist
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(script_dir, CONFIG_FILE)
+    user_home = os.path.expanduser("~")
     
-    if os.path.exists(config_path):
+    # Check script directory first
+    script_config_path = os.path.join(script_dir, CONFIG_FILE)
+    
+    # Check fallback location
+    fallback_base = os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
+    fallback_config_path = os.path.join(fallback_base, CONFIG_FILE)
+    
+    # Priority 1: Check fallback location first (most likely if script is in read-only location)
+    if os.path.exists(fallback_config_path):
         try:
-            with open(config_path, 'r') as f:
+            with open(fallback_config_path, 'r') as f:
                 config = json.load(f)
             return config
         except Exception as e:
-            print_warn(f"Failed to load configuration: {e}")
-            return None
+            print_warn(f"Failed to load configuration from AppData: {e}")
+    
+    # Priority 2: Check script directory
+    if os.path.exists(script_config_path):
+        try:
+            with open(script_config_path, 'r') as f:
+                config = json.load(f)
+            return config
+        except Exception as e:
+            print_warn(f"Failed to load configuration from script directory: {e}")
+    
     return None
 
 def save_config(config):
     """
     Save unified configuration to JSON file
+    Uses the validated working directory (either script_dir or fallback)
     Returns True if successful, False otherwise
     """
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    config_path = os.path.join(script_dir, CONFIG_FILE)
+    user_home = os.path.expanduser("~")
+    
+    # Check if script_dir is writable first
+    can_write, error = check_write_permissions(script_dir)
+    
+    if can_write:
+        # Script dir is writable - use it
+        config_path = os.path.join(script_dir, CONFIG_FILE)
+    else:
+        # Script dir not writable - use fallback
+        fallback_base = os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
+        config_path = os.path.join(fallback_base, CONFIG_FILE)
     
     try:
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(config_path), exist_ok=True)
+        
         # Add script version and timestamp (type: ignore for mixed dict types)
         config['script_version'] = SCRIPT_VERSION  # type: ignore
         config['last_updated'] = datetime.now().isoformat()  # type: ignore
@@ -1786,9 +2325,9 @@ def configure_pre_flight_wizard(user_home):
     print()
     
     while True:
-        choice = input("Clear screen between phases? (Y/N) [Y]: ").strip().upper()
+        choice = input("Clear screen between phases? (Y/N) [N]: ").strip().upper()
         if choice == '':
-            choice = 'Y'  # Default to Yes
+            choice = 'N'  # Default to No
         if choice in ['Y', 'N']:
             config['clear_screen_between_phases'] = (choice == 'Y')  # type: ignore
             print()
@@ -2646,13 +3185,14 @@ def import_single_book(book_path, library_path, use_duplicates=False, timeout_se
     except Exception as e:
         return False, None, str(e), False, False, None
 
-def write_import_log(library_path, results, azw_files, script_dir):
+def write_import_log(library_path, results, azw_files, working_dir):
     """
     Write detailed import log to file
+    Uses working_dir which respects fallback paths
     Returns: log file path
     """
     # Create logs directory with import subfolder
-    logs_dir = os.path.join(script_dir, "Logs", "import_logs")
+    logs_dir = os.path.join(working_dir, "Logs", "import_logs")
     os.makedirs(logs_dir, exist_ok=True)
     
     # Create timestamped log file
@@ -2799,8 +3339,11 @@ def import_all_azw_files(content_dir, library_path, use_duplicates=False, per_bo
     
     # Write log file if there were any failures or timeouts
     if results['failed'] > 0 or results['timed_out'] > 0:
+        user_home = os.path.expanduser("~")
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = write_import_log(library_path, results, azw_files, script_dir)
+        can_write, _ = check_write_permissions(script_dir)
+        working_dir = script_dir if can_write else os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
+        log_file = write_import_log(library_path, results, azw_files, working_dir)
         results['log_file'] = log_file
     
     return results
@@ -3087,7 +3630,7 @@ def find_source_file_in_directory(book_dir):
 def convert_book_to_epub(source_path, epub_path):
     """
     Convert Imported eBook to EPUB using ebook-convert
-    Returns: (success: bool, error_message: str)
+    Returns: (success: bool, error_message: str, is_kfx_error: bool)
     """
     try:
         cmd = [
@@ -3105,17 +3648,55 @@ def convert_book_to_epub(source_path, epub_path):
                                encoding='utf-8', errors='replace', timeout=300)
         
         if result.returncode == 0 and os.path.exists(epub_path):
-            return True, ""
+            return True, "", False
         else:
             error_msg = result.stderr if result.stderr else "Conversion failed"
-            return False, error_msg
+            
+            # Detect KFX-specific errors
+            is_kfx_error = False
+            if error_msg:
+                kfx_indicators = [
+                    "Amazon KFX book",
+                    "KFX book",
+                    "cannot be processed",
+                    "KFXError"
+                ]
+                is_kfx_error = any(indicator.lower() in error_msg.lower() for indicator in kfx_indicators)
+                
+                # Detect DRM-specific errors
+                drm_indicators = [
+                    "DRMError",
+                    "has DRM",
+                    "KFXDRMError"
+                ]
+                is_drm_error = any(indicator.lower() in error_msg.lower() for indicator in drm_indicators)
+                
+                # If KFX error detected, replace verbose traceback with clean message
+                if is_kfx_error:
+                    error_msg = (
+                        "Amazon KFX book - requires KFX Input plugin to be installed\n"
+                        "          See: https://www.mobileread.com/forums/showthread.php?t=283371"
+                    )
+                # If DRM error detected, replace verbose traceback with clean message
+                elif is_drm_error:
+                    error_msg = (
+                        "Book has DRM and cannot be converted\n"
+                        "          Possible causes:\n"
+                        "            - DeDRM plugin not installed\n"
+                        "            - Key extraction failed (no valid decryption key found)\n"
+                        "          Install DeDRM plugin: https://github.com/Satsuoni/DeDRM_tools"
+                    )
+                    # Treat DRM errors as KFX errors for tracking purposes (both are DRM-related)
+                    is_kfx_error = True
+            
+            return False, error_msg, is_kfx_error
             
     except subprocess.TimeoutExpired:
-        return False, "Conversion timeout (5 minutes)"
+        return False, "Conversion timeout (5 minutes)", False
     except Exception as e:
-        return False, str(e)
+        return False, str(e), False
 
-def convert_azw3_via_mobi(source_path, epub_path):
+def convert_azw3_via_mobi(source_path, epub_path, working_dir=None):
     """
     Convert AZW3 to EPUB via temporary MOBI intermediate format
     Two-step conversion: AZW3 → MOBI → EPUB
@@ -3130,12 +3711,19 @@ def convert_azw3_via_mobi(source_path, epub_path):
     Args:
         source_path: Path to source AZW3 file
         epub_path: Path to output EPUB file
+        working_dir: Directory to use for temp files (respects fallback paths)
     
     Returns:
-        tuple: (success: bool, error_message: str)
+        tuple: (success: bool, error_message: str, is_kfx_error: bool)
     """
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    temp_extraction_dir = os.path.join(script_dir, "temp_extraction")
+    if working_dir is None:
+        # Determine working_dir if not provided
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        user_home = os.path.expanduser("~")
+        can_write, _ = check_write_permissions(script_dir)
+        working_dir = script_dir if can_write else os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
+    
+    temp_extraction_dir = os.path.join(working_dir, "temp_extraction")
     
     # Fixed filename - safe because conversions happen sequentially
     temp_mobi_path = os.path.join(temp_extraction_dir, "temp_conversion.mobi")
@@ -3164,7 +3752,7 @@ def convert_azw3_via_mobi(source_path, epub_path):
         
         if result_mobi.returncode != 0 or not os.path.exists(temp_mobi_path):
             error_msg = result_mobi.stderr if result_mobi.stderr else "AZW3 to MOBI conversion failed"
-            return False, f"Step 1 failed: {error_msg}"
+            return False, f"Step 1 failed: {error_msg}", False
         
         # Step 2: Convert MOBI to EPUB
         cmd_epub = [
@@ -3187,15 +3775,15 @@ def convert_azw3_via_mobi(source_path, epub_path):
         )
         
         if result_epub.returncode == 0 and os.path.exists(epub_path):
-            return True, ""
+            return True, "", False
         else:
             error_msg = result_epub.stderr if result_epub.stderr else "MOBI to EPUB conversion failed"
-            return False, f"Step 2 failed: {error_msg}"
+            return False, f"Step 2 failed: {error_msg}", False
             
     except subprocess.TimeoutExpired:
-        return False, "Conversion timeout (5 minutes per step)"
+        return False, "Conversion timeout (5 minutes per step)", False
     except Exception as e:
-        return False, str(e)
+        return False, str(e), False
     finally:
         # Always try to cleanup temp MOBI file
         if os.path.exists(temp_mobi_path):
@@ -3292,13 +3880,14 @@ def remove_format_from_calibre(book_id, format_name, library_path):
     except Exception as e:
         return False, str(e)
 
-def write_conversion_log(library_path, stats, book_info, script_dir):
+def write_conversion_log(library_path, stats, book_info, working_dir):
     """
     Write detailed conversion log to file
+    Uses working_dir which respects fallback paths
     Returns: log file path
     """
     # Create logs directory with conversion subfolder
-    logs_dir = os.path.join(script_dir, "Logs", "conversion_logs")
+    logs_dir = os.path.join(working_dir, "Logs", "conversion_logs")
     os.makedirs(logs_dir, exist_ok=True)
     
     # Create timestamped log file
@@ -3478,19 +4067,25 @@ def process_book_conversions(library_path, book_ids, calibre_config=None):
         # Detect if this is AZW3 format
         is_azw3 = source_filename.lower().endswith('.azw3')
         
+        # Determine working_dir for temp files
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        user_home = os.path.expanduser("~")
+        can_write, _ = check_write_permissions(script_dir)
+        working_dir = script_dir if can_write else os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
+        
         # Convert to EPUB (route based on format)
         if is_azw3:
             print("  Converting to EPUB (via MOBI intermediate)...")
-            success, error = convert_azw3_via_mobi(source_path, epub_path)
+            success, error, is_kfx_error = convert_azw3_via_mobi(source_path, epub_path, working_dir=working_dir)
         else:
             print("  Converting to EPUB...")
-            success, error = convert_book_to_epub(source_path, epub_path)
+            success, error, is_kfx_error = convert_book_to_epub(source_path, epub_path)
         
         if not success:
             print_error(f"  {error}")
             stats['failed'] += 1
-            # Track if it's likely a DRM-protected file
-            if is_kfx_zip:
+            # Track if it's a KFX-specific error or DRM-protected file
+            if is_kfx_error or is_kfx_zip:
                 stats['failed_drm_protected'] += 1
             stats['errors'].append(f"Book {book_id}: Conversion failed - {error}")
             stats['failed_conversions'].append((book_id, title, author, error))
@@ -3559,8 +4154,11 @@ def process_book_conversions(library_path, book_ids, calibre_config=None):
     
     # Write log file if there were any failures or skipped books
     if stats['failed'] > 0 or stats.get('skipped_kfx_zip', 0) > 0 or stats.get('failed_merges'):
+        user_home = os.path.expanduser("~")
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        log_file = write_conversion_log(library_path, stats, book_info, script_dir)
+        can_write, _ = check_write_permissions(script_dir)
+        working_dir = script_dir if can_write else os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
+        log_file = write_conversion_log(library_path, stats, book_info, working_dir)
         if log_file:
             print()
             print_step(f"Detailed conversion log saved to:")
@@ -3584,8 +4182,7 @@ def process_book_conversions(library_path, book_ids, calibre_config=None):
     
     display_phase_summary(4, "KFX to EPUB Conversion", summary_points, pause_seconds=5)
     
-    # Cleanup temp_extraction folder after all conversions complete
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # Cleanup temp_extraction folder after all conversions complete (will auto-detect working_dir)
     cleanup_temp_extraction(silent=True)
     
     return stats
@@ -3762,19 +4359,17 @@ def main():
     user_home = os.path.expanduser("~")
     extractor = os.path.join(fixed_dir, "KFXKeyExtractor28.exe")
     
-    # Create Keys folder for key files
+    # Define initial paths (will be updated after validation if using fallback)
     keys_dir = os.path.join(fixed_dir, "Keys")
-    os.makedirs(keys_dir, exist_ok=True)
     output_key = os.path.join(keys_dir, "kindlekey.txt")
     output_k4i = os.path.join(keys_dir, "kindlekey.k4i")
     
     dedrm_json = os.path.join(user_home, "AppData", "Roaming", "calibre", "plugins", "dedrm.json")
     reference_json = os.path.join(fixed_dir, "dedrm  filled.json")
     
-    # Create backup filename with timestamp in backups folder
+    # Define backup paths (will be updated after validation if using fallback)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backups_dir = os.path.join(fixed_dir, "backups")
-    os.makedirs(backups_dir, exist_ok=True)
     backup_json = os.path.join(backups_dir, f"dedrm_backup_{timestamp}.json")
     
     os.system('cls')  # Clear screen
@@ -3794,7 +4389,40 @@ def main():
         # Cleanup any leftover temp_extraction folder
         cleanup_temp_extraction()
         
-        # === PRE-FLIGHT: CHECK FOR SAVED CONFIGURATION ===
+        # =====================================================================
+        # PRE-FLIGHT: VALIDATE ALL REQUIREMENTS
+        # =====================================================================
+        
+        print_step("Validating system requirements...")
+        print()
+        
+        validation_report = validate_all_requirements(script_dir, user_home)
+        
+        if not display_validation_results(validation_report):
+            return 1  # User cancelled or critical components missing
+        
+        # Use the validated working directory for all operations
+        working_dir = validation_report['working_dir']
+        is_using_fallback = validation_report['is_fallback']
+        
+        # If using fallback, update all path variables
+        if is_using_fallback:
+            fixed_dir = working_dir
+            keys_dir = os.path.join(working_dir, "Keys")
+            backups_dir = os.path.join(working_dir, "backups")
+            
+            # Ensure directories exist
+            os.makedirs(keys_dir, exist_ok=True)
+            os.makedirs(backups_dir, exist_ok=True)
+            
+            # Update file paths
+            output_key = os.path.join(keys_dir, "kindlekey.txt")
+            output_k4i = os.path.join(keys_dir, "kindlekey.k4i")
+            backup_json = os.path.join(backups_dir, f"dedrm_backup_{timestamp}.json")
+        
+        # =====================================================================
+        # PRE-FLIGHT: CHECK FOR SAVED CONFIGURATION
+        # =====================================================================
         saved_config = load_config()
         
         if saved_config:
