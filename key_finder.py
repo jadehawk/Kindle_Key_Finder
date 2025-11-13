@@ -167,6 +167,18 @@ def print_banner_and_version():
     # Check for latest version from GitHub
     print_step("Checking for updates...")
     latest_version, error = check_latest_version()
+
+def display_credits_and_links():
+    """
+    Display final credits page with links and acknowledgments
+    Can be called from multiple locations for consistency
+    """
+    os.system('cls')
+    print()
+    print_banner_and_version()
+    
+    # Check for latest version (self-contained)
+    latest_version, error = check_latest_version()
     
     if latest_version:
         comparison = compare_versions(SCRIPT_VERSION, latest_version)
@@ -197,6 +209,38 @@ def print_banner_and_version():
         # Silently ignore version check failures - don't show error to user
         print_colored("  (Unable to check for updates - continuing...)", 'cyan')
         print()
+    
+    print("For the latest version of this script and updates, visit:")
+    print_colored("https://techy-notes.com/blog/dedrm-v10-0-14-tutorial", 'cyan')
+    print()
+    print("Watch the video tutorial on YouTube:")
+    print_colored("https://www.youtube.com/watch?v=pkii6EQEeGs", 'cyan')
+    print()
+    print_warn("Please subscribe to the YouTube channel!")
+    print("Your support and appreciation is greatly valued.")
+    print()
+    print("If you'd like to show extra support this Script, consider buying me a Beer!:")
+    print_colored("https://buymeacoffee.com/jadehawk", 'cyan')
+    print()
+    print("--------------------------------------------------")
+    print_step("CREDITS")
+    print("--------------------------------------------------")
+    print()
+    print("This script is powered by KFXKeyExtractor28.exe")
+    print("Created/Modded by: Satsuoni")
+    print()
+    print("KFXKeyExtractor is the CORE tool that makes this automation possible.")
+    print("It extracts Kindle DRM keys from your Kindle for PC installation,")
+    print("enabling the DeDRM process for your purchased ebooks.")
+    print()
+    print("Visit Satsuoni's GitHub profile:")
+    print_colored("https://github.com/Satsuoni", 'cyan')
+    print()
+    print("For the DeDRM tools repository:")
+    print_colored("https://github.com/Satsuoni/DeDRM_tools", 'cyan')
+    print()
+    print("Thank you, Satsuoni, for creating and maintaining this essential tool!")
+    print()
 
 def display_phase_banner(phase_num, phase_name):
     """
@@ -1474,7 +1518,20 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
         if not book_folders:
             print_warn("No book folders found in content directory")
             print()
-            return False, None, None, extraction_stats
+            print("--------------------------------------------------")
+            print()
+            print_error("No books found in content directory!")
+            print()
+            
+            # Pause for 5 seconds before showing final page
+            print_step("Pausing for 5 seconds before exit...")
+            time.sleep(5)
+            
+            # Show final credits page
+            display_credits_and_links()
+            
+            # Exit script
+            sys.exit(1)
         
         extraction_stats['total'] = len(book_folders)
         print_ok(f"Found {len(book_folders)} book folder(s)")
