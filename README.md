@@ -268,6 +268,37 @@ This tool is intended for use with ebooks you have legally purchased. Users are 
 
 ## Version History
 
+**Version 2025.11.13.JH**
+
+Fallback Path System & Write-Protected Directory Support:
+
+- Implemented comprehensive fallback path system for write-protected directories
+- Added automatic detection and handling of read-only script locations (network drives, restricted folders)
+- Created `%LOCALAPPDATA%\Kindle_Key_Finder` fallback location for all operations
+- Updated all file operations to respect fallback paths:
+  - Configuration files (key_finder_config.json)
+  - Extracted keys (Keys/kindlekey.txt, Keys/kindlekey.k4i)
+  - Processing logs (Logs/extraction_logs/, import_logs/, conversion_logs/)
+  - Book history tracking (history.txt)
+  - Temporary extraction folders (temp_extraction/)
+  - Configuration backups (backups/dedrm*backup*\*.json)
+- Added `_LOCATION_INFO.txt` marker file to help users locate their files
+- Implemented smart config migration between script directory and AppData
+- Fixed `discover_config_location()` to prioritize writable script directory
+- Prevents config duplication when moving between protected/unprotected folders
+- All log writing functions now use validated working directory
+- Book history tracking properly uses fallback paths
+- Temporary file operations respect fallback location
+
+New Functions Added:
+
+- `check_write_permissions()` - Tests directory writeability
+- `get_disk_space()` - Retrieves disk space information
+- `get_fallback_paths()` - Generates fallback directory structure
+- `discover_config_location()` - Smart config path discovery with migration logic
+- `create_location_marker()` - Creates helper file for users to locate their data
+- `migrate_config_to_fallback()` - Handles config migration between locations
+
 **Version 2025.11.11.JH**
 
 Fallback Path System & Configuration Management:

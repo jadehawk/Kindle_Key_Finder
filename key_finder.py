@@ -8,7 +8,7 @@ No external dependencies - uses the same methods as the plugin
 """
 
 # Script Version
-SCRIPT_VERSION = "2025.11.11.JH"
+SCRIPT_VERSION = "2025.11.13.JH"
 
 # Unified Configuration File
 CONFIG_FILE = "key_finder_config.json"
@@ -24,7 +24,7 @@ import msvcrt
 import platform
 from datetime import datetime
 
-def print_colored(message, color):
+def print_colored(message: str, color: str) -> None:
     """Print colored messages"""
     colors = {
         'cyan': '\033[96m',
@@ -36,20 +36,120 @@ def print_colored(message, color):
     }
     print(f"{colors.get(color, '')}{message}{colors['end']}")
 
-def print_step(message):
+def print_step(message: str) -> None:
     print_colored(f"[*] {message}", 'cyan')
 
-def print_ok(message):
+def print_ok(message: str) -> None:
     print_colored(f"[OK] {message}", 'green')
 
-def print_warn(message):
+def print_warn(message: str) -> None:
     print_colored(f"[!] {message}", 'yellow')
 
-def print_error(message):
+def print_error(message: str) -> None:
     print_colored(f"[ERROR] {message}", 'red')
 
-def print_done(message):
+def print_done(message: str) -> None:
     print_colored(f"[DONE] {message}", 'magenta')
+
+def parse_version(version_str):
+    """
+    Parse version string into comparable components.
+    Format: YYYY.MM.DD[.build]JH
+    
+    Args:
+        version_str: Version string (e.g., "2025.11.11.JH" or "2025.11.11.1.JH")
+    
+    Returns:
+        tuple: (year, month, day, build) or None if parsing fails
+        - build defaults to 0 if not present
+    
+    Example:
+        "2025.11.11.JH" -> (2025, 11, 11, 0)
+        "2025.11.11.1.JH" -> (2025, 11, 11, 1)
+    """
+    try:
+        # Remove .JH suffix if present
+        version_clean = version_str.replace('.JH', '').replace('JH', '')
+        
+        # Split into parts
+        parts = version_clean.split('.')
+        
+        if len(parts) < 3:
+            return None
+        
+        year = int(parts[0])
+        month = int(parts[1])
+        day = int(parts[2])
+        build = int(parts[3]) if len(parts) >= 4 else 0
+        
+        # Validate ranges
+        if not (2000 <= year <= 2100 and 1 <= month <= 12 and 1 <= day <= 31):
+            return None
+        
+        return (year, month, day, build)
+        
+    except (ValueError, IndexError):
+        return None
+
+def compare_versions(version1, version2):
+    """
+    Compare two version strings chronologically.
+    
+    Args:
+        version1: First version string
+        version2: Second version string
+    
+    Returns:
+        int: -1 if version1 < version2
+             0 if version1 == version2
+             1 if version1 > version2
+             None if either version cannot be parsed
+    """
+    v1 = parse_version(version1)
+    v2 = parse_version(version2)
+    
+    if v1 is None or v2 is None:
+        return None
+    
+    # Compare tuples directly (year, month, day, build)
+    if v1 < v2:
+        return -1
+    elif v1 > v2:
+        return 1
+    else:
+        return 0
+
+def check_latest_version():
+    """
+    Check for latest version from GitHub repository releases
+    Returns: (latest_version: str or None, error_message: str or None)
+    """
+    try:
+        import urllib.request
+        import json
+        
+        # GitHub API URL for latest release
+        url = "https://api.github.com/repos/jadehawk/Kindle_Key_Finder/releases/latest"
+        
+        # Set timeout to 5 seconds
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        
+        with urllib.request.urlopen(req, timeout=5) as response:
+            data = json.loads(response.read().decode('utf-8'))
+            
+            # Get tag_name from release (e.g., "2025.11.11.JH" or "2025.11.11.1.JH")
+            tag_name = data.get('tag_name', '')
+            
+            if tag_name:
+                # Remove 'v' prefix if present (e.g., "v2025.11.11.JH" -> "2025.11.11.JH")
+                version = tag_name.lstrip('v')
+                return version, None
+            else:
+                return None, "No tag_name found in latest release"
+                
+    except Exception as e:
+        # Silently fail - don't disrupt script execution
+        return None, str(e)
 
 def print_banner_and_version():
     """Print ASCII banner and script version"""
@@ -63,6 +163,40 @@ def print_banner_and_version():
     print_step("Kindle Key Finder - Python Edition Wrapper")
     print(f"Script Version: {SCRIPT_VERSION}")
     print()
+    
+    # Check for latest version from GitHub
+    print_step("Checking for updates...")
+    latest_version, error = check_latest_version()
+    
+    if latest_version:
+        comparison = compare_versions(SCRIPT_VERSION, latest_version)
+        
+        if comparison is None:
+            # Parsing failed - fall back to string comparison
+            print_colored("  (Unable to parse version - check manually)", 'cyan')
+            print()
+        elif comparison < 0:
+            # Local version is older than GitHub version
+            print()
+            print_colored("=" * 70, 'yellow')
+            print_colored(f"  ⚠   NEW VERSION AVAILABLE: {latest_version}", 'yellow')
+            print_colored(f"  Current version: {SCRIPT_VERSION}", 'yellow')
+            print_colored("  Visit https://techy-notes.com for the latest version", 'yellow')
+            print_colored("=" * 70, 'yellow')
+            print()
+        elif comparison > 0:
+            # Local version is NEWER than GitHub version (dev/testing scenario)
+            print_colored(f"  ℹ   You are running a development version ({SCRIPT_VERSION})", 'cyan')
+            print_colored(f"  Latest stable release: {latest_version}", 'cyan')
+            print()
+        else:
+            # Versions are equal
+            print_colored("  ✓   You are running the latest version", 'green')
+            print()
+    else:
+        # Silently ignore version check failures - don't show error to user
+        print_colored("  (Unable to check for updates - continuing...)", 'cyan')
+        print()
 
 def display_phase_banner(phase_num, phase_name):
     """
@@ -848,11 +982,14 @@ def scan_kindle_content_directory(content_dir):
         print_error(f"Error scanning content directory: {e}")
         return []
 
-def extract_keys_from_single_book(extractor_path, kindle_dir, book_folder, output_key, output_k4i, asin, book_title, working_dir=None):
+def extract_keys_from_single_book(extractor_path, kindle_dir, book_folder, output_key, output_k4i, asin, book_title, working_dir=None, raw_log_path=None):
     """
     Extract keys from a single book folder using temporary directory workaround
     Returns: (success: bool, dsn: str, tokens: str, error_msg: str, asin: str)
     """
+    # Initialize cmd at the very beginning to avoid unbound variable error in exception handlers
+    cmd = []
+    
     script_dir = os.path.dirname(os.path.abspath(__file__))
     user_home = os.path.expanduser("~")
     
@@ -867,6 +1004,7 @@ def extract_keys_from_single_book(extractor_path, kindle_dir, book_folder, outpu
     temp_dir = os.path.join(working_dir, "temp_extraction")
     
     try:
+        
         # Copy extractor to Kindle folder if not already there
         extractor_in_kindle = os.path.join(kindle_dir, "KFXKeyExtractor28.exe")
         if not os.path.exists(extractor_in_kindle):
@@ -884,8 +1022,9 @@ def extract_keys_from_single_book(extractor_path, kindle_dir, book_folder, outpu
         
         # Run extractor on temp directory (not individual book folder)
         # This gives the extractor the directory structure it expects
+        cmd = [extractor_in_kindle, temp_dir, output_key, output_k4i]
         process = subprocess.Popen(
-            [extractor_in_kindle, temp_dir, output_key, output_k4i],
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -926,6 +1065,16 @@ def extract_keys_from_single_book(extractor_path, kindle_dir, book_folder, outpu
             process.wait(timeout=60)  # 60 second timeout per book
         except subprocess.TimeoutExpired:
             process.kill()
+            # Log to raw log if enabled
+            if raw_log_path:
+                append_to_raw_log(
+                    raw_log_path,
+                    cmd,
+                    ''.join(stdout_lines),
+                    ''.join(stderr_lines),
+                    -1,  # Timeout exit code
+                    book_info=f"{asin} - {book_title}"
+                )
             # Cleanup temp directory before returning
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
@@ -933,6 +1082,17 @@ def extract_keys_from_single_book(extractor_path, kindle_dir, book_folder, outpu
         
         # Wait for stderr thread
         stderr_thread.join(timeout=5)
+        
+        # Log to raw log if enabled
+        if raw_log_path:
+            append_to_raw_log(
+                raw_log_path,
+                cmd,
+                ''.join(stdout_lines),
+                ''.join(stderr_lines),
+                process.returncode,
+                book_info=f"{asin} - {book_title}"
+            )
         
         # Check if extraction was successful
         if process.returncode != 0:
@@ -1073,6 +1233,129 @@ def append_keys_to_files(output_key, output_k4i, temp_key, temp_k4i):
     except Exception as e:
         return False, str(e)
 
+def get_raw_log_path(working_dir, phase_name):
+    """
+    Get path for RAW debug log file
+    Creates timestamped filename per script run
+    
+    Args:
+        working_dir: Working directory (respects fallback paths)
+        phase_name: Phase name (extraction, import, conversion)
+    
+    Returns:
+        str: Full path to raw log file
+    """
+    logs_dir = os.path.join(working_dir, "Logs", f"{phase_name}_logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return os.path.join(logs_dir, f"raw_{phase_name}_{timestamp}.log")
+
+def cleanup_old_raw_logs(logs_dir, keep_count=10):
+    """
+    Cleanup old RAW log files, keeping only the most recent ones
+    
+    Args:
+        logs_dir: Directory containing raw log files
+        keep_count: Number of most recent files to keep (default: 10)
+    """
+    try:
+        if not os.path.exists(logs_dir):
+            return
+        
+        # Find all raw_*.log files
+        raw_logs = []
+        for filename in os.listdir(logs_dir):
+            if filename.startswith('raw_') and filename.endswith('.log'):
+                filepath = os.path.join(logs_dir, filename)
+                mtime = os.path.getmtime(filepath)
+                raw_logs.append((filepath, mtime))
+        
+        # Sort by modification time (newest first)
+        raw_logs.sort(key=lambda x: x[1], reverse=True)
+        
+        # Delete files beyond keep_count
+        for filepath, _ in raw_logs[keep_count:]:
+            try:
+                os.remove(filepath)
+            except Exception:
+                pass  # Ignore errors during cleanup
+                
+    except Exception:
+        pass  # Silently ignore cleanup errors
+
+def append_to_raw_log(raw_log_path, command, stdout, stderr, exit_code, book_info=None):
+    """
+    Append subprocess results to RAW debug log file
+    Creates file with header if it doesn't exist
+    Thread-safe atomic append operation
+    
+    Args:
+        raw_log_path: Path to raw log file
+        command: Command that was executed (list or string)
+        stdout: Standard output from subprocess
+        stderr: Standard error from subprocess
+        exit_code: Process exit code
+        book_info: Optional book identifier (e.g., ASIN or book name)
+    """
+    try:
+        # Check if file exists to determine if we need header
+        file_exists = os.path.exists(raw_log_path)
+        
+        with open(raw_log_path, 'a', encoding='utf-8') as f:
+            # Write header if this is a new file
+            if not file_exists:
+                f.write("═" * 70 + "\n")
+                phase_name = os.path.basename(os.path.dirname(raw_log_path)).replace('_logs', '').upper()
+                f.write(f"RAW DEBUG LOG - {phase_name} PHASE\n")
+                f.write("═" * 70 + "\n")
+                f.write(f"Script Version: {SCRIPT_VERSION}\n")
+                f.write(f"Log Created: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write("═" * 70 + "\n\n")
+            
+            # Write entry separator
+            f.write("─" * 70 + "\n")
+            f.write(f"[{datetime.now().strftime('%H:%M:%S')}]")
+            if book_info:
+                f.write(f" Book: {book_info}\n")
+            else:
+                f.write("\n")
+            
+            # Write command
+            if isinstance(command, list):
+                f.write(f"Command: {' '.join(command)}\n")
+            else:
+                f.write(f"Command: {command}\n")
+            
+            f.write("─" * 70 + "\n")
+            
+            # Write stdout
+            f.write("STDOUT:\n")
+            if stdout:
+                f.write(stdout)
+                if not stdout.endswith('\n'):
+                    f.write('\n')
+            else:
+                f.write("(empty)\n")
+            f.write("\n")
+            
+            # Write stderr
+            f.write("STDERR:\n")
+            if stderr:
+                f.write(stderr)
+                if not stderr.endswith('\n'):
+                    f.write('\n')
+            else:
+                f.write("(empty)\n")
+            f.write("\n")
+            
+            # Write exit code
+            f.write(f"Exit Code: {exit_code}\n")
+            f.write("═" * 70 + "\n\n")
+            
+    except Exception:
+        pass  # Silently ignore logging errors
+
 def write_extraction_log(extraction_stats, working_dir):
     """
     Write detailed extraction log to file
@@ -1094,6 +1377,7 @@ def write_extraction_log(extraction_stats, working_dir):
             f.write("KINDLE KEY EXTRACTION LOG\n")
             f.write("=" * 70 + "\n")
             f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Script Version: {SCRIPT_VERSION}\n")
             f.write(f"Total Books Found: {extraction_stats['total']}\n")
             f.write(f"Timeout per book: 60 seconds\n")
             f.write("\n")
@@ -1164,9 +1448,18 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
         'skipped_books': []  # List of tuples: (asin, title, reason)
     }
     
-    # Load config to check if book title fetching is enabled
+    # Load config to check if book title fetching and raw logging are enabled
     config = load_config()
     fetch_titles = config.get('fetch_book_titles', False) if config else False
+    enable_raw_logs = config.get('enable_raw_logs', False) if config else False
+    
+    # Initialize raw log path if enabled
+    raw_log_path = None
+    if enable_raw_logs:
+        raw_log_path = get_raw_log_path(working_dir, 'extraction')
+        # Cleanup old raw logs (keep 10 most recent)
+        logs_dir = os.path.join(working_dir, "Logs", "extraction_logs")
+        cleanup_old_raw_logs(logs_dir, keep_count=10)
     
     try:
         # Create temporary copy if needed
@@ -1247,9 +1540,10 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
                 # Display: folder_name only
                 print(f"[{idx}/{len(book_folders)}] {folder_name}...", end=' ', flush=True)
             
-            # Extract keys from single book (pass validated working_dir)
+            # Extract keys from single book (pass validated working_dir and raw_log_path)
             success, book_dsn, book_tokens, error_msg, _ = extract_keys_from_single_book(
-                extractor_path, kindle_dir, book_folder, temp_key, temp_k4i, asin, book_title, working_dir=working_dir
+                extractor_path, kindle_dir, book_folder, temp_key, temp_k4i, asin, book_title, 
+                working_dir=working_dir, raw_log_path=raw_log_path
             )
             
             if success:
@@ -1300,6 +1594,11 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
             if log_file:
                 print_step(f"Extraction error log saved to:")
                 print(f"      {log_file}")
+        
+        # Show raw log location if enabled
+        if enable_raw_logs and raw_log_path:
+            print_step(f"Raw debug log saved to:")
+            print(f"      {raw_log_path}")
         
         print()
         
@@ -1403,6 +1702,30 @@ def check_write_permissions(directory):
         return True, None
     except Exception as e:
         return False, str(e)
+
+def get_disk_space(path):
+    """
+    Get disk space information for a given path
+    Returns: (free_space_gb: float, total_space_gb: float, percent_free: float) or (None, None, None) on error
+    """
+    try:
+        # Ensure path exists or use parent directory
+        check_path = path
+        while not os.path.exists(check_path) and check_path != os.path.dirname(check_path):
+            check_path = os.path.dirname(check_path)
+        
+        if not os.path.exists(check_path):
+            return None, None, None
+        
+        stat = shutil.disk_usage(check_path)
+        free_gb = stat.free / (1024 ** 3)  # Convert bytes to GB
+        total_gb = stat.total / (1024 ** 3)
+        percent_free = (stat.free / stat.total) * 100 if stat.total > 0 else 0
+        
+        return free_gb, total_gb, percent_free
+    except Exception as e:
+        print_warn(f"Could not check disk space for {path}: {e}")
+        return None, None, None
 
 def get_fallback_paths(user_home):
     """
@@ -1720,9 +2043,9 @@ def display_validation_results(report):
     print()
     
     # Validation Results Table
-    print("┌────────────────────────────────┬────────────┬────────────────────────────────────────┐")
-    print("│ Component                      │ Status     │ Details                                │")
-    print("├────────────────────────────────┼────────────┼────────────────────────────────────────┤")
+    print("┌─────────────────────────────┬────────────┬────────────────────────────────────────┐")
+    print("│ Component                   │ Status     │ Details                                │")
+    print("├─────────────────────────────┼────────────┼────────────────────────────────────────┤")
     
     # Row 1: Write Permissions
     if report['is_fallback']:
@@ -1731,7 +2054,7 @@ def display_validation_results(report):
     else:
         status = "✓ OK"
         details = "Script directory writable"
-    print(f"│ Write Permissions              │ {status:<10} │ {details:<38} │")
+    print(f"│ Write Permissions           │ {status:<10} │ {details:<38} │")
     
     # Row 2: KFXKeyExtractor28.exe
     if report['extractor_installed']:
@@ -1740,7 +2063,7 @@ def display_validation_results(report):
     else:
         status = "✗ Missing"
         details = "CRITICAL - Phase 1 will fail"
-    print(f"│ KFXKeyExtractor28.exe          │ {status:<10} │ {details:<38} │")
+    print(f"│ KFXKeyExtractor28.exe       │ {status:<10} │ {details:<38} │")
     
     # Row 3: Kindle for PC
     if report['kindle_installed']:
@@ -1753,7 +2076,7 @@ def display_validation_results(report):
     else:
         status = "✗ Missing"
         details = "CRITICAL - Phase 1 will fail"
-    print(f"│ Kindle for PC                  │ {status:<10} │ {details:<38} │")
+    print(f"│ Kindle for PC               │ {status:<10} │ {details:<38} │")
     
     # Row 4: Calibre
     if report['calibre_installed']:
@@ -1762,7 +2085,7 @@ def display_validation_results(report):
     else:
         status = "✗ Missing"
         details = "Phases 3-4 will be skipped"
-    print(f"│ Calibre                        │ {status:<10} │ {details:<38} │")
+    print(f"│ Calibre                     │ {status:<10} │ {details:<38} │")
     
     # Row 5: KFX Input Plugin
     if report['kfx_plugin_installed']:
@@ -1771,7 +2094,7 @@ def display_validation_results(report):
     else:
         status = "✗ Missing"
         details = "KFX conversion will fail"
-    print(f"│ KFX Input Plugin               │ {status:<10} │ {details:<38} │")
+    print(f"│ KFX Input Plugin            │ {status:<10} │ {details:<38} │")
     
     # Row 6: DeDRM Plugin
     if report['dedrm_plugin_installed']:
@@ -1780,10 +2103,57 @@ def display_validation_results(report):
     else:
         status = "✗ Missing"
         details = "Books will remain DRM-protected"
-    print(f"│ DeDRM Plugin                   │ {status:<10} │ {details:<38} │")
+    print(f"│ DeDRM Plugin                │ {status:<10} │ {details:<38} │")
     
     # Table footer
-    print("└────────────────────────────────┴────────────┴────────────────────────────────────────┘")
+    print("└─────────────────────────────┴────────────┴────────────────────────────────────────┘")
+    
+    # Storage Information Section
+    print()
+    print("┌─────────────────────────────┬────────────┬────────────────────────────────────────┐")
+    print("│ Storage Information         │ Status     │ Details                                │")
+    print("├─────────────────────────────┼────────────┼────────────────────────────────────────┤")
+    
+    # Get user home for AppData check
+    user_home = os.path.expanduser("~")
+    appdata_local = os.path.join(user_home, "AppData", "Local")
+    
+    # Check AppData Local storage
+    appdata_free, appdata_total, appdata_percent = get_disk_space(appdata_local)
+    if appdata_free is not None:
+        storage_display = f"{appdata_free:.1f} GB / {appdata_total:.1f} GB ({appdata_percent:.1f}% free)"
+        # Color code based on available space
+        if appdata_free < 1.0:
+            storage_status = "⚠ CRITICAL"
+        elif appdata_free < 5.0:
+            storage_status = "⚠ Warning"
+        else:
+            storage_status = "✓ OK"
+        print(f"│ AppData Free Space          │ {storage_status:<10} │ {storage_display:<38} │")
+    else:
+        print(f"│ AppData Free Space          │ {'Unknown':<10} │ {'N/A':<38} │")
+    
+    # Check Calibre Library storage (if configured)
+    # Load config to check if Calibre import is enabled
+    current_config = load_config()
+    if current_config and 'calibre_import' in current_config and current_config['calibre_import'].get('enabled'):
+        lib_path = current_config['calibre_import'].get('library_path')
+        if lib_path and lib_path != 'Not set':
+            lib_free, lib_total, lib_percent = get_disk_space(lib_path)
+            if lib_free is not None:
+                storage_display = f"{lib_free:.1f} GB / {lib_total:.1f} GB ({lib_percent:.1f}% free)"
+                # Color code based on available space
+                if lib_free < 1.0:
+                    storage_status = "⚠ CRITICAL"
+                elif lib_free < 5.0:
+                    storage_status = "⚠ Warning"
+                else:
+                    storage_status = "✓ OK"
+                print(f"│ Calibre Library Free Space  │ {storage_status:<10} │ {storage_display:<38} │")
+            else:
+                print(f"│ Calibre Library Free Space  │ {'Unknown':<10} │ {'N/A':<38} │")
+    
+    print("└─────────────────────────────┴────────────┴────────────────────────────────────────┘")
     print()
     
     # Show fallback location details if applicable
@@ -1920,9 +2290,9 @@ def save_config(config):
         # Ensure directory exists
         os.makedirs(os.path.dirname(config_path), exist_ok=True)
         
-        # Add script version and timestamp (type: ignore for mixed dict types)
-        config['script_version'] = SCRIPT_VERSION  # type: ignore
-        config['last_updated'] = datetime.now().isoformat()  # type: ignore
+        # Add script version and timestamp
+        config['script_version'] = SCRIPT_VERSION  # type: ignore[index]
+        config['last_updated'] = datetime.now().isoformat()  # type: ignore[index]
         
         with open(config_path, 'w') as f:
             json.dump(config, f, indent=2)
@@ -1992,6 +2362,10 @@ def display_config_summary(config):
     # Auto-Launch Kindle
     auto_launch = "Yes" if config.get('auto_launch_kindle', False) else "No"
     print(f"│ Auto-Launch Kindle          │ {auto_launch:<72} │")
+    
+    # Raw Debug Logs
+    raw_logs = "Yes" if config.get('enable_raw_logs', False) else "No"
+    print(f"│ Raw Debug Logs              │ {raw_logs:<72} │")
     
     # Calibre Import section
     if 'calibre_import' in config:
@@ -2171,11 +2545,12 @@ def prompt_config_action_with_timer(config):
 # PRE-FLIGHT CONFIGURATION WIZARD
 # ============================================================================
 
-def configure_pre_flight_wizard(user_home):
+def configure_pre_flight_wizard(user_home, TOTAL_STEPS):
     """
     Pre-Flight Configuration Wizard
     Comprehensive setup for all script options
     """
+    
     os.system('cls')
     print()
     print_banner_and_version()
@@ -2193,7 +2568,7 @@ def configure_pre_flight_wizard(user_home):
     }
     
     # 1. Kindle Content Path
-    print_step("[1/5] Kindle Content Directory")
+    print_step(f"[1/{TOTAL_STEPS}] Kindle Content Directory")
     print("--------------------------------------------------")
     default_content = os.path.join(user_home, "Documents", "My Kindle Content")
     print(f"Default: {default_content}")
@@ -2231,11 +2606,11 @@ def configure_pre_flight_wizard(user_home):
     print_step("PRE-FLIGHT CONFIGURATION WIZARD")
     print("=" * 70)
     print()
-    print_ok(f"✓ [1/5] Kindle Content Path: {config['kindle_content_path']}")
+    print_ok(f"✓ [1/{TOTAL_STEPS}] Kindle Content Path: {config['kindle_content_path']}")
     print()
     
     # 2. Hide Sensitive Information
-    print_step("[2/5] Privacy Settings")
+    print_step(f"[2/{TOTAL_STEPS}] Privacy Settings")
     print("--------------------------------------------------")
     print("Hide sensitive information (DSN, tokens, keys) in console output?")
     print()
@@ -2245,7 +2620,7 @@ def configure_pre_flight_wizard(user_home):
         if choice == '':
             choice = 'Y'  # Default to Yes
         if choice in ['Y', 'N']:
-            config['hide_sensitive_info'] = (choice == 'Y')  # type: ignore
+            config['hide_sensitive_info'] = (choice == 'Y')  # type: ignore[assignment]
             print()
             if choice == 'Y':
                 print_ok("✓ Sensitive information will be hidden")
@@ -2264,13 +2639,13 @@ def configure_pre_flight_wizard(user_home):
     print_step("PRE-FLIGHT CONFIGURATION WIZARD")
     print("=" * 70)
     print()
-    print_ok(f"✓ [1/5] Kindle Content Path: {config['kindle_content_path']}")
+    print_ok(f"✓ [1/{TOTAL_STEPS}] Kindle Content Path: {config['kindle_content_path']}")
     hide_status = "Yes" if config['hide_sensitive_info'] else "No"
-    print_ok(f"✓ [2/5] Hide Sensitive Info: {hide_status}")
+    print_ok(f"✓ [2/{TOTAL_STEPS}] Hide Sensitive Info: {hide_status}")
     print()
     
     # 3. Fetch Book Titles During Key Extraction
-    print_step("[3/5] Key Extraction Display Options")
+    print_step(f"[3/{TOTAL_STEPS}] Key Extraction Display Options")
     print("--------------------------------------------------")
     print("Fetch book titles from Amazon during key extraction?")
     print()
@@ -2286,7 +2661,7 @@ def configure_pre_flight_wizard(user_home):
         if choice == '':
             choice = 'N'  # Default to No (faster)
         if choice in ['Y', 'N']:
-            config['fetch_book_titles'] = (choice == 'Y')  # type: ignore
+            config['fetch_book_titles'] = (choice == 'Y')  # type: ignore[assignment]
             print()
             if choice == 'Y':
                 print_ok("✓ Book titles will be fetched (slower extraction)")
@@ -2305,15 +2680,15 @@ def configure_pre_flight_wizard(user_home):
     print_step("PRE-FLIGHT CONFIGURATION WIZARD")
     print("=" * 70)
     print()
-    print_ok(f"✓ [1/5] Kindle Content Path: {config['kindle_content_path']}")
+    print_ok(f"✓ [1/{TOTAL_STEPS}] Kindle Content Path: {config['kindle_content_path']}")
     hide_status = "Yes" if config['hide_sensitive_info'] else "No"
-    print_ok(f"✓ [2/5] Hide Sensitive Info: {hide_status}")
+    print_ok(f"✓ [2/{TOTAL_STEPS}] Hide Sensitive Info: {hide_status}")
     fetch_status = "Yes" if config['fetch_book_titles'] else "No"
-    print_ok(f"✓ [3/5] Fetch Book Titles: {fetch_status}")
+    print_ok(f"✓ [3/{TOTAL_STEPS}] Fetch Book Titles: {fetch_status}")
     print()
     
     # 4. Clear Screen Between Phases
-    print_step("[4/6] Display Options")
+    print_step(f"[4/{TOTAL_STEPS}] Display Options")
     print("--------------------------------------------------")
     print("Clear screen between each phase for cleaner output?")
     print()
@@ -2329,7 +2704,7 @@ def configure_pre_flight_wizard(user_home):
         if choice == '':
             choice = 'N'  # Default to No
         if choice in ['Y', 'N']:
-            config['clear_screen_between_phases'] = (choice == 'Y')  # type: ignore
+            config['clear_screen_between_phases'] = (choice == 'Y')  # type: ignore[assignment]
             print()
             if choice == 'Y':
                 print_ok("✓ Screen will be cleared between phases")
@@ -2348,17 +2723,17 @@ def configure_pre_flight_wizard(user_home):
     print_step("PRE-FLIGHT CONFIGURATION WIZARD")
     print("=" * 70)
     print()
-    print_ok(f"✓ [1/6] Kindle Content Path: {config['kindle_content_path']}")
+    print_ok(f"✓ [1/{TOTAL_STEPS}] Kindle Content Path: {config['kindle_content_path']}")
     hide_status = "Yes" if config['hide_sensitive_info'] else "No"
-    print_ok(f"✓ [2/6] Hide Sensitive Info: {hide_status}")
+    print_ok(f"✓ [2/{TOTAL_STEPS}] Hide Sensitive Info: {hide_status}")
     fetch_status = "Yes" if config['fetch_book_titles'] else "No"
-    print_ok(f"✓ [3/6] Fetch Book Titles: {fetch_status}")
+    print_ok(f"✓ [3/{TOTAL_STEPS}] Fetch Book Titles: {fetch_status}")
     clear_status = "Yes" if config['clear_screen_between_phases'] else "No"
-    print_ok(f"✓ [4/6] Clear Screen Between Phases: {clear_status}")
+    print_ok(f"✓ [4/{TOTAL_STEPS}] Clear Screen Between Phases: {clear_status}")
     print()
     
     # 5. Skip Phase Pauses
-    print_step("[5/6] Phase Pause Settings")
+    print_step(f"[5/{TOTAL_STEPS}] Phase Pause Settings")
     print("--------------------------------------------------")
     print("Skip countdown pauses between phases for faster execution?")
     print()
@@ -2375,7 +2750,7 @@ def configure_pre_flight_wizard(user_home):
         if choice == '':
             choice = 'N'  # Default to No (keep pauses)
         if choice in ['Y', 'N']:
-            config['skip_phase_pauses'] = (choice == 'Y')  # type: ignore
+            config['skip_phase_pauses'] = (choice == 'Y')  # type: ignore[assignment]
             print()
             if choice == 'Y':
                 print_ok("✓ Phase pauses will be skipped (faster execution)")
@@ -2394,30 +2769,30 @@ def configure_pre_flight_wizard(user_home):
     print_step("PRE-FLIGHT CONFIGURATION WIZARD")
     print("=" * 70)
     print()
-    print_ok(f"✓ [1/6] Kindle Content Path: {config['kindle_content_path']}")
+    print_ok(f"✓ [1/{TOTAL_STEPS}] Kindle Content Path: {config['kindle_content_path']}")
     hide_status = "Yes" if config['hide_sensitive_info'] else "No"
-    print_ok(f"✓ [2/6] Hide Sensitive Info: {hide_status}")
+    print_ok(f"✓ [2/{TOTAL_STEPS}] Hide Sensitive Info: {hide_status}")
     fetch_status = "Yes" if config['fetch_book_titles'] else "No"
-    print_ok(f"✓ [3/6] Fetch Book Titles: {fetch_status}")
+    print_ok(f"✓ [3/{TOTAL_STEPS}] Fetch Book Titles: {fetch_status}")
     clear_status = "Yes" if config['clear_screen_between_phases'] else "No"
-    print_ok(f"✓ [4/6] Clear Screen Between Phases: {clear_status}")
+    print_ok(f"✓ [4/{TOTAL_STEPS}] Clear Screen Between Phases: {clear_status}")
     skip_pauses_status = "Yes" if config['skip_phase_pauses'] else "No"
-    print_ok(f"✓ [5/7] Skip Phase Pauses: {skip_pauses_status}")
+    print_ok(f"✓ [5/{TOTAL_STEPS}] Skip Phase Pauses: {skip_pauses_status}")
     print()
 
     # 6. Auto-Launch Kindle
-    print_step("[6/7] Auto-Launch Kindle")
+    print_step(f"[6/{TOTAL_STEPS}] Auto-Launch Kindle")
     print("--------------------------------------------------")
     print("Would you like to automatically launch Kindle.exe?")
     print("(Script will wait for Kindle to close before scanning for books)")
     print()
     
     while True:
-        choice = input("Enable Auto-Launch Kindle? (Y/N) [Y]: ").strip().upper()
+        choice = input("Enable Auto-Launch Kindle? (Y/N) [N]: ").strip().upper()
         if choice == '':
-            choice = 'Y'  # Default to No (keep pauses)
+            choice = 'N'  # Default to No
         if choice in ['Y', 'N']:
-            config['auto_launch_kindle'] = (choice == 'Y')  # type: ignore
+            config['auto_launch_kindle'] = (choice == 'Y')  # type: ignore[assignment]
             print()
             break
         else:
@@ -2432,21 +2807,74 @@ def configure_pre_flight_wizard(user_home):
     print_step("PRE-FLIGHT CONFIGURATION WIZARD")
     print("=" * 70)
     print()
-    print_ok(f"✓ [1/7] Kindle Content Path: {config['kindle_content_path']}")
+    print_ok(f"✓ [1/{TOTAL_STEPS}] Kindle Content Path: {config['kindle_content_path']}")
     hide_status = "Yes" if config['hide_sensitive_info'] else "No"
-    print_ok(f"✓ [2/7] Hide Sensitive Info: {hide_status}")
+    print_ok(f"✓ [2/{TOTAL_STEPS}] Hide Sensitive Info: {hide_status}")
     fetch_status = "Yes" if config['fetch_book_titles'] else "No"
-    print_ok(f"✓ [3/7] Fetch Book Titles: {fetch_status}")
+    print_ok(f"✓ [3/{TOTAL_STEPS}] Fetch Book Titles: {fetch_status}")
     clear_status = "Yes" if config['clear_screen_between_phases'] else "No"
-    print_ok(f"✓ [4/7] Clear Screen Between Phases: {clear_status}")
+    print_ok(f"✓ [4/{TOTAL_STEPS}] Clear Screen Between Phases: {clear_status}")
     skip_pauses_status = "Yes" if config['skip_phase_pauses'] else "No"
-    print_ok(f"✓ [5/7] Skip Phase Pauses: {skip_pauses_status}")
+    print_ok(f"✓ [5/{TOTAL_STEPS}] Skip Phase Pauses: {skip_pauses_status}")
     auto_launch_status = "Yes" if config['auto_launch_kindle'] else "No"
-    print_ok(f"✓ [6/7] Auto-Launch Kindle: {auto_launch_status}")
+    print_ok(f"✓ [6/{TOTAL_STEPS}] Auto-Launch Kindle: {auto_launch_status}")
     print()
 
-    # 7. Calibre Import Settings
-    print_step("[7/7] Calibre Auto-Import")
+    # 7. Raw Debug Logs
+    print_step(f"[7/{TOTAL_STEPS}] Raw Debug Logs")
+    print("--------------------------------------------------")
+    print("Enable raw debug logs for complete subprocess output?")
+    print()
+    print_warn("NOTE:")
+    print("  - Raw logs capture ALL stdout/stderr from subprocesses")
+    print("  - Useful for debugging when complete output is needed")
+    print("  - Console display will still only show errors")
+    print("  - Logs are auto-rotated (keeps 10 most recent)")
+    print("  - Stored in Logs/extraction_logs/, import_logs/, conversion_logs/")
+    print("  - Recommended: No (only enable when debugging)")
+    print()
+    
+    while True:
+        choice = input("Enable raw debug logs? (Y/N) [N]: ").strip().upper()
+        if choice == '':
+            choice = 'N'  # Default to No
+        if choice in ['Y', 'N']:
+            config['enable_raw_logs'] = (choice == 'Y')  # type: ignore[assignment]
+            print()
+            if choice == 'Y':
+                print_ok("✓ Raw debug logs will be enabled")
+            else:
+                print_ok("✓ Raw debug logs will be disabled")
+            break
+        print_error("Please enter Y or N")
+    
+    print()
+    
+    # Clear console before next question
+    os.system('cls')
+    print()
+    print_banner_and_version()
+    print("=" * 70)
+    print_step("PRE-FLIGHT CONFIGURATION WIZARD")
+    print("=" * 70)
+    print()
+    print_ok(f"✓ [1/{TOTAL_STEPS}] Kindle Content Path: {config['kindle_content_path']}")
+    hide_status = "Yes" if config['hide_sensitive_info'] else "No"
+    print_ok(f"✓ [2/{TOTAL_STEPS}] Hide Sensitive Info: {hide_status}")
+    fetch_status = "Yes" if config['fetch_book_titles'] else "No"
+    print_ok(f"✓ [3/{TOTAL_STEPS}] Fetch Book Titles: {fetch_status}")
+    clear_status = "Yes" if config['clear_screen_between_phases'] else "No"
+    print_ok(f"✓ [4/{TOTAL_STEPS}] Clear Screen Between Phases: {clear_status}")
+    skip_pauses_status = "Yes" if config['skip_phase_pauses'] else "No"
+    print_ok(f"✓ [5/{TOTAL_STEPS}] Skip Phase Pauses: {skip_pauses_status}")
+    auto_launch_status = "Yes" if config['auto_launch_kindle'] else "No"
+    print_ok(f"✓ [6/{TOTAL_STEPS}] Auto-Launch Kindle: {auto_launch_status}")
+    enable_raw_logs = "Yes" if config['enable_raw_logs'] else "No"
+    print_ok(f"✓ [7/{TOTAL_STEPS}] Enable Raw Debug Logs: {enable_raw_logs}")
+    print()
+    
+    # 8. Calibre Import Settings
+    print_step(f"[8/{TOTAL_STEPS}] Calibre Auto-Import")
     print("--------------------------------------------------")
     print("Enable automatic import of DeDRMed ebooks to Calibre?")
     print("(You can configure this later if you skip now)")
@@ -2461,7 +2889,7 @@ def configure_pre_flight_wizard(user_home):
         print_error("Please enter Y or N")
     
     if choice == 'N':
-        config['calibre_import'] = {'enabled': False}  # type: ignore
+        config['calibre_import'] = {'enabled': False}  # type: ignore[assignment]
         print()
         print_ok("✓ Calibre auto-import disabled")
         print()
@@ -2470,9 +2898,32 @@ def configure_pre_flight_wizard(user_home):
         print()
         calibre_config = prompt_calibre_import_settings()
         if calibre_config:
-            config['calibre_import'] = calibre_config  # type: ignore
+            config['calibre_import'] = calibre_config  # type: ignore[assignment]
         else:
-            config['calibre_import'] = {'enabled': False}  # type: ignore
+            config['calibre_import'] = {'enabled': False}  # type: ignore[assignment]
+    
+    # Clear console before next question
+    os.system('cls')
+    print()
+    print_banner_and_version()
+    print("=" * 70)
+    print_step("PRE-FLIGHT CONFIGURATION WIZARD")
+    print("=" * 70)
+    print()
+    print_ok(f"✓ [1/{TOTAL_STEPS}] Kindle Content Path: {config['kindle_content_path']}")
+    hide_status = "Yes" if config['hide_sensitive_info'] else "No"
+    print_ok(f"✓ [2/{TOTAL_STEPS}] Hide Sensitive Info: {hide_status}")
+    fetch_status = "Yes" if config['fetch_book_titles'] else "No"
+    print_ok(f"✓ [3/{TOTAL_STEPS}] Fetch Book Titles: {fetch_status}")
+    clear_status = "Yes" if config['clear_screen_between_phases'] else "No"
+    print_ok(f"✓ [4/{TOTAL_STEPS}] Clear Screen Between Phases: {clear_status}")
+    skip_pauses_status = "Yes" if config['skip_phase_pauses'] else "No"
+    print_ok(f"✓ [5/{TOTAL_STEPS}] Skip Phase Pauses: {skip_pauses_status}")
+    auto_launch_status = "Yes" if config['auto_launch_kindle'] else "No"
+    print_ok(f"✓ [6/{TOTAL_STEPS}] Auto-Launch Kindle: {auto_launch_status}")
+    calibre_status = "Enabled" if config['calibre_import'].get('enabled') else "Disabled"
+    print_ok(f"✓ [8/{TOTAL_STEPS}] Calibre Auto-Import: {calibre_status}")
+    print()
     
     # Display final configuration review
     while True:
@@ -2517,7 +2968,7 @@ def configure_pre_flight_wizard(user_home):
             print_step("Restarting configuration wizard...")
             print()
             # Recursively call the wizard to start over
-            return configure_pre_flight_wizard(user_home)
+            return configure_pre_flight_wizard(user_home, TOTAL_STEPS)
         elif review_choice == 'Q':
             print()
             print_warn("Configuration cancelled - exiting without saving")
@@ -2699,6 +3150,40 @@ def get_library_book_count(library_path):
     except Exception:
         return None  # Return None on any error
 
+def reset_calibredb_book_id(library_path):
+    """
+    Silently reset Calibre's book ID counter if library has zero books.
+    
+    Args:
+        library_path: Path to Calibre library directory
+        
+    Returns:
+        bool: True if reset successful, False otherwise (silent operation)
+    """
+    import sqlite3
+    
+    try:
+        # Check book count - silent abort if not 0
+        book_count = get_library_book_count(library_path)
+        if book_count is None or book_count > 0:
+            return False
+        
+        # Perform reset silently
+        db_path = os.path.join(library_path, "metadata.db")
+        if not os.path.exists(db_path):
+            return False
+        
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute("DELETE FROM books;")
+        cur.execute("DELETE FROM sqlite_sequence WHERE name='books';")
+        conn.commit()
+        conn.close()
+        
+        return True
+    except:
+        return False  # Silent failure
+
 def verify_library_path(library_path):
     """
     Verify library path exists and contains metadata.db
@@ -2812,7 +3297,7 @@ def prompt_calibre_import_settings():
     print_step("PRE-FLIGHT CONFIGURATION WIZARD")
     print("=" * 70)
     print()
-    print_step("[6/6] Calibre Auto-Import")
+    print_step("[8/8] Calibre Auto-Import")
     print("--------------------------------------------------")
     print()
     
@@ -2852,7 +3337,7 @@ def prompt_calibre_import_settings():
     print_step("PRE-FLIGHT CONFIGURATION WIZARD")
     print("=" * 70)
     print()
-    print_ok(f"✓ [6/6] Calibre Auto-Import")
+    print_ok("✓ [8/8] Calibre Auto-Import")
     if book_count is not None:
         print(f"  ✓ Library Path: {config_progress['library_path']} ({book_count} books)")
     else:
@@ -2894,7 +3379,7 @@ def prompt_calibre_import_settings():
         print_step("PRE-FLIGHT CONFIGURATION WIZARD")
         print("=" * 70)
         print()
-        print_ok(f"✓ [6/6] Calibre Auto-Import")
+        print_ok("✓ [8/8] Calibre Auto-Import")
         print(f"  ✓ Library Path: {config_progress['library_path']}")
         convert_status = "Yes" if config_progress['convert_to_epub'] else "No"
         print(f"  ✓ Convert to EPUB: {convert_status}")
@@ -2938,7 +3423,7 @@ def prompt_calibre_import_settings():
         print_step("PRE-FLIGHT CONFIGURATION WIZARD")
         print("=" * 70)
         print()
-        print_ok(f"✓ [6/6] Calibre Auto-Import")
+        print_ok("✓ [8/8] Calibre Auto-Import")
         print(f"  ✓ Library Path: {config_progress['library_path']}")
         convert_status = "Yes" if config_progress['convert_to_epub'] else "No"
         print(f"  ✓ Convert to EPUB: {convert_status}")
@@ -3121,9 +3606,9 @@ def find_all_azw_files(content_dir, exclude_asins=None):
         print_error(f"Error scanning directory: {e}")
         return []
 
-def import_single_book(book_path, library_path, use_duplicates=False, timeout_seconds=60):
+def import_single_book(book_path, library_path, use_duplicates=False, timeout_seconds=180, raw_log_path=None):
     """
-    Import a single book to Calibre with timeout
+    Import a single book to Calibre with timeout and timer display
     Returns: (success: bool, book_id: str or None, error_msg: str or None, timed_out: bool, already_exists: bool, book_title: str or None)
     """
     cmd = ['calibredb', 'add']
@@ -3138,14 +3623,69 @@ def import_single_book(book_path, library_path, use_duplicates=False, timeout_se
     ])
     
     try:
-        result = subprocess.run(
+        # Start subprocess with Popen for non-blocking execution
+        process = subprocess.Popen(
             cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout_seconds,
             encoding='utf-8',
             errors='replace'
         )
+        
+        # Timer display thread
+        timer_stopped = threading.Event()
+        
+        def display_timer():
+            start_time = time.time()
+            while not timer_stopped.is_set():
+                elapsed = int(time.time() - start_time)
+                minutes, seconds = divmod(elapsed, 60)
+                timeout_mins, timeout_secs = divmod(timeout_seconds, 60)
+                print(f"\r [{minutes:02d}:{seconds:02d} / {timeout_mins:02d}:{timeout_secs:02d}]", 
+                      end='', flush=True)
+                time.sleep(1)
+        
+        timer_thread = threading.Thread(target=display_timer, daemon=True)
+        timer_thread.start()
+        
+        # Wait for process with timeout
+        try:
+            stdout, stderr = process.communicate(timeout=timeout_seconds)
+            result_returncode = process.returncode
+            # Stop timer and clear the line on success
+            timer_stopped.set()
+            timer_thread.join(timeout=1)
+            print("\r" + " " * 40 + "\r", end='', flush=True)
+        except subprocess.TimeoutExpired:
+            # Stop timer and clear the line on timeout
+            timer_stopped.set()
+            timer_thread.join(timeout=1)
+            print("\r" + " " * 40 + "\r", end='', flush=True)
+            process.kill()
+            stdout, stderr = process.communicate()
+            result_returncode = -1
+        
+        # Create a result-like object for compatibility
+        class Result:
+            def __init__(self, returncode, stdout, stderr):
+                self.returncode = returncode
+                self.stdout = stdout
+                self.stderr = stderr
+        
+        result = Result(result_returncode, stdout, stderr)
+        
+        # Log to raw log if enabled
+        if raw_log_path:
+            book_name = os.path.basename(book_path)
+            append_to_raw_log(
+                raw_log_path,
+                cmd,
+                result.stdout,
+                result.stderr,
+                result.returncode,
+                book_info=book_name
+            )
         
         # Parse output for book ID
         if result.returncode == 0 and result.stdout:
@@ -3179,7 +3719,17 @@ def import_single_book(book_path, library_path, use_duplicates=False, timeout_se
         return False, None, error_msg, False, already_exists, book_title
         
     except subprocess.TimeoutExpired:
-        # Kill the process
+        # Log timeout to raw log if enabled
+        if raw_log_path:
+            book_name = os.path.basename(book_path)
+            append_to_raw_log(
+                raw_log_path,
+                cmd,
+                '',
+                '',
+                -1,  # Timeout exit code
+                book_info=book_name
+            )
         return False, None, f"Timeout after {timeout_seconds} seconds", True, False, None
         
     except Exception as e:
@@ -3206,6 +3756,7 @@ def write_import_log(library_path, results, azw_files, working_dir):
             f.write("CALIBRE IMPORT LOG\n")
             f.write("=" * 70 + "\n")
             f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"Script Version: {SCRIPT_VERSION}\n")
             f.write(f"Library: {library_path}\n")
             f.write(f"Total Books Found: {len(azw_files)}\n")
             f.write(f"Timeout per book: 60 seconds\n")
@@ -3256,7 +3807,7 @@ def write_import_log(library_path, results, azw_files, working_dir):
         print_warn(f"Failed to write log file: {e}")
         return None
 
-def import_all_azw_files(content_dir, library_path, use_duplicates=False, per_book_timeout=60, exclude_asins=None):
+def import_all_azw_files(content_dir, library_path, use_duplicates=False, per_book_timeout=120, exclude_asins=None):
     """
     Import all *.azw files one at a time with individual timeouts
     Optionally exclude ASINs that failed key extraction
@@ -3287,6 +3838,24 @@ def import_all_azw_files(content_dir, library_path, use_duplicates=False, per_bo
     print_ok(f"Found {len(azw_files)} .azw file(s)")
     print()
     
+    # Load config to check if raw logging is enabled
+    config = load_config()
+    enable_raw_logs = config.get('enable_raw_logs', False) if config else False
+    
+    # Determine working_dir for raw logs
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    user_home = os.path.expanduser("~")
+    can_write, _ = check_write_permissions(script_dir)
+    working_dir = script_dir if can_write else os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
+    
+    # Initialize raw log path if enabled
+    raw_log_path = None
+    if enable_raw_logs:
+        raw_log_path = get_raw_log_path(working_dir, 'import')
+        # Cleanup old raw logs (keep 10 most recent)
+        logs_dir = os.path.join(working_dir, "Logs", "import_logs")
+        cleanup_old_raw_logs(logs_dir, keep_count=10)
+    
     # Import each book individually
     results = {
         'total': len(azw_files),
@@ -3301,7 +3870,7 @@ def import_all_azw_files(content_dir, library_path, use_duplicates=False, per_bo
         'log_file': None
     }
     
-    print_step(f"Importing books (timeout: {per_book_timeout}s per book)...")
+    print_step(f"Importing books (timeout: {per_book_timeout // 60} minutes per book)...")
     print()
     
     for idx, book_path in enumerate(azw_files, 1):
@@ -3309,29 +3878,30 @@ def import_all_azw_files(content_dir, library_path, use_duplicates=False, per_bo
         # Extract ASIN from filename (e.g., B00JBVUJM8_EBOK.azw -> B00JBVUJM8_EBOK)
         asin = os.path.splitext(book_name)[0]
         
-        print(f"[{idx}/{len(azw_files)}] {book_name}...", end=' ', flush=True)
+        print(f"[{idx}/{len(azw_files)}] {book_name}...")
         
         success, book_id, error_msg, timed_out, already_exists, book_title = import_single_book(
             book_path, 
             library_path, 
             use_duplicates, 
-            per_book_timeout
+            per_book_timeout,
+            raw_log_path=raw_log_path
         )
         
         if success and book_id:
-            print_ok(f"✓ (ID: {book_id})")
+            print_ok(f"  ✓ Imported (ID: {book_id})")
             results['success'] += 1
             results['book_ids'].append(book_id)
         elif timed_out:
-            print_error(f"⏱ TIMEOUT")
+            print_error(f"  ⏱ TIMEOUT")
             results['timed_out'] += 1
             results['timed_out_books'].append(book_name)
         elif already_exists:
-            print_colored(f"[SKIPPED] ✗ Book already exists in the database", 'yellow')
+            print_colored(f"  [SKIPPED] ✗ Book already exists in the database", 'yellow')
             results['skipped'] += 1
             results['skipped_books'].append((asin, book_title if book_title else "Unknown Title"))
         else:
-            print_error(f"✗ FAILED")
+            print_error(f"  ✗ FAILED")
             results['failed'] += 1
             results['failed_books'].append((book_name, error_msg))
     
@@ -3339,12 +3909,14 @@ def import_all_azw_files(content_dir, library_path, use_duplicates=False, per_bo
     
     # Write log file if there were any failures or timeouts
     if results['failed'] > 0 or results['timed_out'] > 0:
-        user_home = os.path.expanduser("~")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        can_write, _ = check_write_permissions(script_dir)
-        working_dir = script_dir if can_write else os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
         log_file = write_import_log(library_path, results, azw_files, working_dir)
         results['log_file'] = log_file
+    
+    # Show raw log location if enabled
+    if enable_raw_logs and raw_log_path:
+        print_step(f"Raw debug log saved to:")
+        print(f"      {raw_log_path}")
+        print()
     
     return results
 
@@ -3627,10 +4199,12 @@ def find_source_file_in_directory(book_dir):
         print_error(f"Error searching directory {book_dir}: {e}")
         return None, False
 
-def convert_book_to_epub(source_path, epub_path):
+def convert_book_to_epub(source_path, epub_path, raw_log_path=None, book_info=None):
     """
     Convert Imported eBook to EPUB using ebook-convert
-    Returns: (success: bool, error_message: str, is_kfx_error: bool)
+    Timeout: 3 minutes per book
+    Returns: (success: bool, error_message: str, error_type: dict)
+    error_type dict contains: {'is_kfx_error': bool, 'is_timeout': bool, 'is_drm': bool, 'is_pdf': bool}
     """
     try:
         cmd = [
@@ -3643,25 +4217,102 @@ def convert_book_to_epub(source_path, epub_path):
             '--epub-version=3'
         ]
         
-        # Use UTF-8 encoding with error handling to prevent Windows cp1252 decode errors
-        result = subprocess.run(cmd, capture_output=True, text=True, 
-                               encoding='utf-8', errors='replace', timeout=300)
+        # Start subprocess with Popen for non-blocking execution
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8',
+            errors='replace'
+        )
+        
+        # Timer display thread
+        timer_stopped = threading.Event()
+        timeout_seconds = 180  # 3 minutes
+        
+        def display_timer():
+            start_time = time.time()
+            while not timer_stopped.is_set():
+                elapsed = int(time.time() - start_time)
+                minutes, seconds = divmod(elapsed, 60)
+                timeout_mins, timeout_secs = divmod(timeout_seconds, 60)
+                print(f"\r  Converting to EPUB.. [ {minutes:02d}:{seconds:02d} / {timeout_mins:02d}:{timeout_secs:02d} ]", 
+                      end='', flush=True)
+                time.sleep(1)
+        
+        timer_thread = threading.Thread(target=display_timer, daemon=True)
+        timer_thread.start()
+        
+        # Wait for process with timeout
+        try:
+            stdout, stderr = process.communicate(timeout=timeout_seconds)
+            result_returncode = process.returncode
+            # Stop timer and clear the line on success
+            timer_stopped.set()
+            timer_thread.join(timeout=1)
+            print("\r" + " " * 80 + "\r", end='', flush=True)
+        except subprocess.TimeoutExpired:
+            # Stop timer and clear the line on timeout
+            timer_stopped.set()
+            timer_thread.join(timeout=1)
+            print("\r" + " " * 80 + "\r", end='', flush=True)
+            process.kill()
+            stdout, stderr = process.communicate()
+            result_returncode = -1
+        
+        # Create a result-like object for compatibility
+        class Result:
+            def __init__(self, returncode, stdout, stderr):
+                self.returncode = returncode
+                self.stdout = stdout
+                self.stderr = stderr
+        
+        result = Result(result_returncode, stdout, stderr)
+        
+        # Log to raw log if enabled
+        if raw_log_path:
+            append_to_raw_log(
+                raw_log_path,
+                cmd,
+                result.stdout,
+                result.stderr,
+                result.returncode,
+                book_info=book_info
+            )
         
         if result.returncode == 0 and os.path.exists(epub_path):
-            return True, "", False
+            error_type = {'is_kfx_error': False, 'is_timeout': False, 'is_drm': False, 'is_pdf': False}
+            return True, "", error_type
         else:
-            error_msg = result.stderr if result.stderr else "Conversion failed"
+            # Combine stdout and stderr for complete error detection
+            stdout_text = result.stdout if result.stdout else ""
+            stderr_text = result.stderr if result.stderr else ""
+            combined_output = stdout_text + "\n" + stderr_text
+            error_msg = stderr_text if stderr_text else "Conversion failed"
             
-            # Detect KFX-specific errors
+            # Detect various error types
             is_kfx_error = False
-            if error_msg:
+            is_drm_error = False
+            is_pdf_content = False
+            
+            if combined_output:
+                # Detect PDF content
+                pdf_indicators = [
+                    "contains PDF content",
+                    "Convert to PDF to extract it",
+                    "PDF content"
+                ]
+                is_pdf_content = any(indicator.lower() in combined_output.lower() for indicator in pdf_indicators)
+                
+                # Detect KFX-specific errors
                 kfx_indicators = [
                     "Amazon KFX book",
                     "KFX book",
                     "cannot be processed",
                     "KFXError"
                 ]
-                is_kfx_error = any(indicator.lower() in error_msg.lower() for indicator in kfx_indicators)
+                is_kfx_error = any(indicator.lower() in combined_output.lower() for indicator in kfx_indicators)
                 
                 # Detect DRM-specific errors
                 drm_indicators = [
@@ -3669,15 +4320,20 @@ def convert_book_to_epub(source_path, epub_path):
                     "has DRM",
                     "KFXDRMError"
                 ]
-                is_drm_error = any(indicator.lower() in error_msg.lower() for indicator in drm_indicators)
+                is_drm_error = any(indicator.lower() in combined_output.lower() for indicator in drm_indicators)
                 
-                # If KFX error detected, replace verbose traceback with clean message
-                if is_kfx_error:
+                # Provide user-friendly error messages
+                if is_pdf_content:
+                    error_msg = (
+                        "Book contains PDF content - cannot convert to EPUB\n"
+                        "          This book uses PDF format which cannot be converted to EPUB\n"
+                        "          The book will remain in its original format"
+                    )
+                elif is_kfx_error:
                     error_msg = (
                         "Amazon KFX book - requires KFX Input plugin to be installed\n"
                         "          See: https://www.mobileread.com/forums/showthread.php?t=283371"
                     )
-                # If DRM error detected, replace verbose traceback with clean message
                 elif is_drm_error:
                     error_msg = (
                         "Book has DRM and cannot be converted\n"
@@ -3689,12 +4345,25 @@ def convert_book_to_epub(source_path, epub_path):
                     # Treat DRM errors as KFX errors for tracking purposes (both are DRM-related)
                     is_kfx_error = True
             
-            return False, error_msg, is_kfx_error
+            error_type = {'is_kfx_error': is_kfx_error, 'is_timeout': False, 'is_drm': is_drm_error, 'is_pdf': is_pdf_content}
+            return False, error_msg, error_type
             
     except subprocess.TimeoutExpired:
-        return False, "Conversion timeout (5 minutes)", False
+        # Log timeout to raw log if enabled
+        if raw_log_path:
+            append_to_raw_log(
+                raw_log_path,
+                cmd, # pyright: ignore[reportPossiblyUnboundVariable]
+                '',
+                '',
+                -1,  # Timeout exit code
+                book_info=book_info
+            )
+        error_type = {'is_kfx_error': False, 'is_timeout': True, 'is_drm': False, 'is_pdf': False}
+        return False, "Conversion timeout (3 minutes) - book may be too large or complex", error_type
     except Exception as e:
-        return False, str(e), False
+        error_type = {'is_kfx_error': False, 'is_timeout': False, 'is_drm': False, 'is_pdf': False}
+        return False, str(e), error_type
 
 def convert_azw3_via_mobi(source_path, epub_path, working_dir=None):
     """
@@ -3969,6 +4638,329 @@ def write_conversion_log(library_path, stats, book_info, working_dir):
         print_warn(f"Failed to write conversion log file: {e}")
         return None
 
+def convert_book_alternate_method(source_path, epub_path, library_path, raw_log_path=None, book_info=None):
+    """
+    Alternate conversion method using calibre-debug -r "KFX Input"
+    This method is more robust for complex/large books that timeout with ebook-convert
+    
+    Args:
+        source_path: Path to source KFX/AZW file
+        epub_path: Path to output EPUB file
+        library_path: Path to Calibre library (for context)
+        raw_log_path: Optional path to raw debug log file
+        book_info: Optional book identifier for logging
+    
+    Returns:
+        tuple: (success: bool, error_message: str, error_type: dict)
+    """
+    try:
+        # First, check if source is PDF (KFX Input can't handle PDFs)
+        if source_path.lower().endswith('.pdf'):
+            # Use standard ebook-convert for PDFs
+            cmd = [
+                'ebook-convert',
+                source_path,
+                epub_path,
+                '--input-profile=default',
+                '--output-profile=tablet'
+            ]
+        else:
+            # Use calibre-debug with KFX Input plugin for KFX/AZW files
+            cmd = [
+                'calibre-debug',
+                '-r',
+                'KFX Input',
+                '--',
+                source_path,
+                epub_path
+            ]
+        
+        # Run with 5-minute timeout, capturing output silently
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            bufsize=1
+        )
+        
+        stdout_lines = []
+        stderr_lines = []
+        
+        # Read output silently in background
+        import sys
+        import threading
+        
+        pdf_detected = threading.Event()  # Flag to detect PDF content early
+        
+        # Silent reader threads (no console output)
+        def read_silently(pipe, lines_list):
+            try:
+                for line in iter(pipe.readline, ''):
+                    if line:
+                        lines_list.append(line)
+                        # Check for PDF content warning - ABORT IMMEDIATELY
+                        if "contains PDF content" in line or "Use the --pdf option" in line:
+                            pdf_detected.set()
+                            # Kill the process immediately to stop wasting time on EPUB conversion
+                            try:
+                                process.kill()
+                            except:
+                                pass
+                            return  # Exit thread
+            except Exception:
+                pass
+        
+        # Start silent reader threads
+        stdout_thread = threading.Thread(target=read_silently, args=(process.stdout, stdout_lines))
+        stderr_thread = threading.Thread(target=read_silently, args=(process.stderr, stderr_lines))
+        
+        stdout_thread.daemon = True
+        stderr_thread.daemon = True
+        
+        stdout_thread.start()
+        stderr_thread.start()
+        
+        # Timer display thread for alternate method
+        timer_stopped = threading.Event()
+        timeout_seconds = 300  # 5 minutes
+        
+        def display_alternate_timer():
+            start_time = time.time()
+            while not timer_stopped.is_set() and not pdf_detected.is_set():
+                elapsed = int(time.time() - start_time)
+                minutes, seconds = divmod(elapsed, 60)
+                timeout_mins, timeout_secs = divmod(timeout_seconds, 60)
+                print(f"\r  Converting (Alternate).. [ {minutes:02d}:{seconds:02d} / {timeout_mins:02d}:{timeout_secs:02d} ]", 
+                      end='', flush=True)
+                time.sleep(1)
+        
+        timer_thread = threading.Thread(target=display_alternate_timer, daemon=True)
+        timer_thread.start()
+        
+        # Wait for process with timeout OR until PDF is detected
+        start_time = time.time()
+        timed_out = False
+        
+        try:
+            # Poll for process completion or PDF detection
+            while process.poll() is None:
+                if pdf_detected.is_set():
+                    # PDF detected - process should already be killed by thread
+                    break
+                
+                # Check if we've exceeded the timeout
+                if time.time() - start_time > timeout_seconds:
+                    timed_out = True
+                    process.kill()
+                    break
+                
+                time.sleep(0.1)
+            
+            # If we timed out, return timeout error
+            if timed_out:
+                # Stop timer and clear the line
+                timer_stopped.set()
+                timer_thread.join(timeout=1)
+                print("\r" + " " * 80 + "\r", end='', flush=True)
+                # Log timeout to raw log if enabled
+                if raw_log_path:
+                    append_to_raw_log(
+                        raw_log_path,
+                        cmd,
+                        ''.join(stdout_lines),
+                        ''.join(stderr_lines),
+                        -1,  # Timeout exit code
+                        book_info=book_info
+                    )
+                error_type = {'is_kfx_error': False, 'is_timeout': True, 'is_drm': False, 'is_pdf': False}
+                return False, "Alternate conversion timeout (5 minutes)", error_type
+        except:
+            pass
+        
+        # Stop timer and clear the line
+        timer_stopped.set()
+        timer_thread.join(timeout=1)
+        print("\r" + " " * 80 + "\r", end='', flush=True)
+        
+        # Wait for threads to finish
+        stdout_thread.join(timeout=2)
+        stderr_thread.join(timeout=2)
+        
+        # Check if PDF was detected during processing
+        if pdf_detected.is_set():
+            # Inform user about PDF detection
+            print()
+            print_warn("  ⚠   PDF CONTENT DETECTED - Cannot convert to EPUB")
+            print_colored("  → Switching to PDF extraction mode...", 'cyan')
+            print()
+            
+            # Try to extract as PDF instead
+            pdf_path = epub_path.replace('.epub', '.pdf')
+            
+            cmd_pdf = [
+                'calibre-debug',
+                '-r',
+                'KFX Input',
+                '--',
+                '-p',
+                source_path,
+                pdf_path
+            ]
+            
+            try:
+                # Run PDF extraction silently with timer
+                process_pdf = subprocess.Popen(
+                    cmd_pdf,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding='utf-8',
+                    errors='replace',
+                    bufsize=1
+                )
+                
+                stdout_pdf_lines = []
+                stderr_pdf_lines = []
+                
+                # Silent PDF reader threads
+                def read_pdf_silently(pipe, lines_list):
+                    try:
+                        for line in iter(pipe.readline, ''):
+                            if line:
+                                lines_list.append(line)
+                    except Exception:
+                        pass
+                
+                stdout_pdf_thread = threading.Thread(target=read_pdf_silently, args=(process_pdf.stdout, stdout_pdf_lines))
+                stderr_pdf_thread = threading.Thread(target=read_pdf_silently, args=(process_pdf.stderr, stderr_pdf_lines))
+                
+                stdout_pdf_thread.daemon = True
+                stderr_pdf_thread.daemon = True
+                
+                stdout_pdf_thread.start()
+                stderr_pdf_thread.start()
+                
+                # PDF timer display
+                pdf_timer_stopped = threading.Event()
+                
+                def display_pdf_timer():
+                    start_time = time.time()
+                    while not pdf_timer_stopped.is_set():
+                        elapsed = int(time.time() - start_time)
+                        minutes, seconds = divmod(elapsed, 60)
+                        timeout_mins, timeout_secs = divmod(300, 60)
+                        print(f"\r  Extracting PDF.. [ {minutes:02d}:{seconds:02d} / {timeout_mins:02d}:{timeout_secs:02d} ]", 
+                              end='', flush=True)
+                        time.sleep(1)
+                
+                pdf_timer_thread = threading.Thread(target=display_pdf_timer, daemon=True)
+                pdf_timer_thread.start()
+                
+                # Wait for process with timeout
+                try:
+                    process_pdf.wait(timeout=300)
+                except subprocess.TimeoutExpired:
+                    process_pdf.kill()
+                    pdf_timer_stopped.set()
+                    pdf_timer_thread.join(timeout=1)
+                    print("\r" + " " * 80 + "\r", end='', flush=True)
+                    error_type = {'is_kfx_error': False, 'is_timeout': True, 'is_drm': False, 'is_pdf': True}
+                    return False, "PDF extraction timeout (5 minutes)", error_type
+                
+                # Stop timer and clear line
+                pdf_timer_stopped.set()
+                pdf_timer_thread.join(timeout=1)
+                print("\r" + " " * 80 + "\r", end='', flush=True)
+                
+                # Wait for threads
+                stdout_pdf_thread.join(timeout=2)
+                stderr_pdf_thread.join(timeout=2)
+                
+                # Combine output for logging
+                stdout_pdf_text = ''.join(stdout_pdf_lines)
+                stderr_pdf_text = ''.join(stderr_pdf_lines)
+                
+                # Log PDF extraction to raw log if enabled
+                if raw_log_path:
+                    append_to_raw_log(
+                        raw_log_path,
+                        cmd_pdf,
+                        stdout_pdf_text,
+                        stderr_pdf_text,
+                        process_pdf.returncode,
+                        book_info=f"{book_info} (PDF extraction)"
+                    )
+                
+                if process_pdf.returncode == 0 and os.path.exists(pdf_path):
+                    # Return success with PDF indicator - calling code will handle PDF format merge
+                    error_type = {'is_kfx_error': False, 'is_timeout': False, 'is_drm': False, 'is_pdf': True}
+                    return True, "", error_type  # Success, but it's a PDF
+                else:
+                    error_type = {'is_kfx_error': False, 'is_timeout': False, 'is_drm': False, 'is_pdf': True}
+                    error_msg = (
+                        "Book contains PDF content - PDF extraction failed\n"
+                        "          Attempted to extract as PDF but conversion failed\n"
+                        "          The book will remain in its original format"
+                    )
+                    return False, error_msg, error_type
+                    
+            except subprocess.TimeoutExpired:
+                error_type = {'is_kfx_error': False, 'is_timeout': True, 'is_drm': False, 'is_pdf': True}
+                return False, "PDF extraction timeout (5 minutes)", error_type
+            except Exception as e:
+                error_type = {'is_kfx_error': False, 'is_timeout': False, 'is_drm': False, 'is_pdf': True}
+                return False, f"PDF extraction failed: {e}", error_type
+        
+        # Combine output
+        stdout_text = ''.join(stdout_lines)
+        stderr_text = ''.join(stderr_lines)
+        combined_output = stdout_text + "\n" + stderr_text
+        
+        # Log to raw log if enabled
+        if raw_log_path:
+            append_to_raw_log(
+                raw_log_path,
+                cmd,
+                stdout_text,
+                stderr_text,
+                process.returncode,
+                book_info=book_info
+            )
+        
+        if process.returncode == 0 and os.path.exists(epub_path):
+            error_type = {'is_kfx_error': False, 'is_timeout': False, 'is_drm': False, 'is_pdf': False}
+            return True, "", error_type
+        else:
+            error_msg = stderr_text if stderr_text else "Alternate conversion failed"
+            
+            # Detect error types
+            is_kfx_error = False
+            is_drm_error = False
+            is_pdf_content = False
+            
+            if combined_output:
+                # Detect PDF content
+                pdf_indicators = ["contains PDF content", "Convert to PDF to extract it", "PDF content"]
+                is_pdf_content = any(indicator.lower() in combined_output.lower() for indicator in pdf_indicators)
+                
+                # Detect KFX-specific errors
+                kfx_indicators = ["KFX", "cannot be processed", "KFXError"]
+                is_kfx_error = any(indicator.lower() in combined_output.lower() for indicator in kfx_indicators)
+                
+                # Detect DRM-specific errors
+                drm_indicators = ["DRMError", "has DRM", "KFXDRMError"]
+                is_drm_error = any(indicator.lower() in combined_output.lower() for indicator in drm_indicators)
+            
+            error_type = {'is_kfx_error': is_kfx_error, 'is_timeout': False, 'is_drm': is_drm_error, 'is_pdf': is_pdf_content}
+            return False, error_msg, error_type
+            
+    except Exception as e:
+        error_type = {'is_kfx_error': False, 'is_timeout': False, 'is_drm': False, 'is_pdf': False}
+        return False, str(e), error_type
+
 def process_book_conversions(library_path, book_ids, calibre_config=None):
     """
     Main orchestrator for Phase 4: KFX to EPUB conversion
@@ -4009,6 +5001,9 @@ def process_book_conversions(library_path, book_ids, calibre_config=None):
     
     print_step(f"Converting {len(book_ids)} book(s) to EPUB format...")
     print()
+    print_warn("NOTE: Each book has a 3-minute timeout for conversion")
+    print("      Large or complex books may timeout and fail")
+    print()
     
     # Query database for book info (titles, authors, paths)
     print_step("Querying Calibre database for book information...")
@@ -4021,9 +5016,11 @@ def process_book_conversions(library_path, book_ids, calibre_config=None):
     print_ok(f"Retrieved information for {len(book_info)} book(s)")
     print()
     
-    # Add tracking for skipped and DRM-protected files
+    # Add tracking for skipped, DRM-protected, and timeout files
     stats['skipped_kfx_zip'] = 0
     stats['failed_drm_protected'] = 0
+    stats['failed_timeout'] = 0
+    stats['timeout_books'] = []  # List of tuples: (book_id, title, author)
     
     # Process each book
     for idx, (book_id, info) in enumerate(book_info.items(), 1):
@@ -4073,20 +5070,40 @@ def process_book_conversions(library_path, book_ids, calibre_config=None):
         can_write, _ = check_write_permissions(script_dir)
         working_dir = script_dir if can_write else os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
         
+        # Initialize raw log path if enabled
+        enable_raw_logs = config.get('enable_raw_logs', False) if config else False
+        raw_log_path = None
+        if enable_raw_logs:
+            raw_log_path = get_raw_log_path(working_dir, 'conversion')
+            # Cleanup old raw logs (keep 10 most recent)
+            logs_dir = os.path.join(working_dir, "Logs", "conversion_logs")
+            cleanup_old_raw_logs(logs_dir, keep_count=10)
+        
         # Convert to EPUB (route based on format)
         if is_azw3:
             print("  Converting to EPUB (via MOBI intermediate)...")
             success, error, is_kfx_error = convert_azw3_via_mobi(source_path, epub_path, working_dir=working_dir)
+            error_type = {'is_kfx_error': is_kfx_error, 'is_timeout': False, 'is_drm': False}
         else:
             print("  Converting to EPUB...")
-            success, error, is_kfx_error = convert_book_to_epub(source_path, epub_path)
+            book_info_str = f"{book_id} - {title} by {author}"
+            success, error, error_type = convert_book_to_epub(source_path, epub_path, raw_log_path=raw_log_path, book_info=book_info_str)
         
         if not success:
+            # Add timeout indicator to error message if it was a timeout
+            if error_type.get('is_timeout'):
+                print_error(f"  Conversion failed - Timeout")
+            else:
+                print_error(f"  Conversion failed")
             print_error(f"  {error}")
             stats['failed'] += 1
             # Track if it's a KFX-specific error or DRM-protected file
-            if is_kfx_error or is_kfx_zip:
+            if error_type.get('is_kfx_error') or error_type.get('is_drm') or is_kfx_zip:
                 stats['failed_drm_protected'] += 1
+            # Track timeout failures separately
+            if error_type.get('is_timeout'):
+                stats['failed_timeout'] += 1
+                stats['timeout_books'].append((book_id, title, author))
             stats['errors'].append(f"Book {book_id}: Conversion failed - {error}")
             stats['failed_conversions'].append((book_id, title, author, error))
             print()
@@ -4187,6 +5204,179 @@ def process_book_conversions(library_path, book_ids, calibre_config=None):
     
     return stats
 
+def process_timeout_retries(library_path, timeout_books, book_info, calibre_config=None):
+    """
+    Phase 4B: Retry timed-out conversions using alternate method
+    
+    Args:
+        library_path: Path to Calibre library
+        timeout_books: List of tuples (book_id, title, author) that timed out
+        book_info: Dict mapping book_id -> {'title': str, 'author': str, 'path': str}
+        calibre_config: Calibre configuration dict
+    
+    Returns:
+        dict with retry statistics
+    """
+    # Load config to check clear screen setting
+    config = load_config()
+    if config and config.get('clear_screen_between_phases', True):
+        os.system('cls')
+    
+    display_phase_banner("4B", "Retry Timed-Out Conversions (Alternate Method)")
+    
+    retry_stats = {
+        'total': len(timeout_books),
+        'converted': 0,
+        'merged': 0,
+        'failed': 0,
+        'failed_conversions': [],
+        'failed_merges': []
+    }
+    
+    if not timeout_books:
+        print_warn("No timed-out books to retry")
+        return retry_stats
+    
+    # Get source management setting
+    source_management = calibre_config.get('source_file_management', 'keep_both') if calibre_config else 'keep_both'
+    
+    print_step(f"Retrying {len(timeout_books)} timed-out book(s) with alternate method...")
+    print()
+    print_warn("NOTE: Using calibre-debug with KFX Input plugin")
+    print("      This method is more robust for complex/large books")
+    print("      Timeout: 5 minutes per book")
+    print()
+    
+    # Process each timed-out book
+    for idx, (book_id, title, author) in enumerate(timeout_books, 1):
+        print_step(f"Retrying book {idx}/{len(timeout_books)}: '{title}' by {author}")
+        
+        # Get book info
+        if book_id not in book_info:
+            print_error(f"  Book info not found for ID {book_id}")
+            retry_stats['failed'] += 1
+            retry_stats['failed_conversions'].append((book_id, title, author, "Book info not found"))
+            print()
+            continue
+        
+        info = book_info[book_id]
+        book_path = info['path']
+        book_dir = os.path.join(library_path, book_path)
+        
+        # Find source file
+        source_filename, is_kfx_zip = find_source_file_in_directory(book_dir)
+        
+        if not source_filename:
+            error_msg = f"No source file found in {book_path}"
+            print_error(f"  {error_msg}")
+            retry_stats['failed'] += 1
+            retry_stats['failed_conversions'].append((book_id, title, author, error_msg))
+            print()
+            continue
+        
+        source_path = os.path.join(book_dir, source_filename)
+        epub_filename = os.path.splitext(source_filename)[0] + '.epub'
+        epub_path = os.path.join(book_dir, epub_filename)
+        
+        print(f"  Source: {source_filename}")
+        print(f"  Target: {epub_filename}")
+        print("  Converting with alternate method...")
+        
+        # Determine working_dir and raw log path
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        user_home = os.path.expanduser("~")
+        can_write, _ = check_write_permissions(script_dir)
+        working_dir = script_dir if can_write else os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
+        
+        # Check if raw logging is enabled
+        config = load_config()
+        enable_raw_logs = config.get('enable_raw_logs', False) if config else False
+        raw_log_path = None
+        if enable_raw_logs:
+            raw_log_path = get_raw_log_path(working_dir, 'conversion')
+        
+        # Use alternate conversion method with raw logging
+        book_info_str = f"{book_id} - {title} by {author}"
+        success, error, error_type = convert_book_alternate_method(
+            source_path, 
+            epub_path, 
+            library_path,
+            raw_log_path=raw_log_path,
+            book_info=book_info_str
+        )
+        
+        if not success:
+            print_error(f"  {error}")
+            retry_stats['failed'] += 1
+            retry_stats['failed_conversions'].append((book_id, title, author, error))
+            print()
+            continue
+        
+        print_ok("  Conversion successful")
+        retry_stats['converted'] += 1
+        
+        # Check if this was a PDF extraction (not EPUB)
+        if error_type.get('is_pdf', False):
+            # PDF was extracted instead of EPUB
+            pdf_path = epub_path.replace('.epub', '.pdf')
+            print("  Merging PDF format to Calibre...")
+            success, error = add_epub_format_to_calibre(book_id, pdf_path, library_path)
+        else:
+            # Normal EPUB conversion
+            print("  Merging EPUB format to Calibre...")
+            success, error = add_epub_format_to_calibre(book_id, epub_path, library_path)
+        
+        if not success:
+            print_error(f"  {error}")
+            retry_stats['failed_merges'].append((book_id, title, author, error))
+        else:
+            print_ok("  EPUB format merged successfully")
+            retry_stats['merged'] += 1
+            
+            # Handle source file management
+            if source_management == 'delete_source':
+                source_ext = os.path.splitext(source_filename)[1].upper().replace('.', '')
+                print(f"  Removing {source_ext} format from Calibre...")
+                success, error = remove_format_from_calibre(book_id, source_ext, library_path)
+                if success:
+                    print_ok(f"  {source_ext} format removed")
+                else:
+                    print_warn(f"  Failed to remove {source_ext} format: {error}")
+            elif source_management == 'delete_kfx_zip_only' and is_kfx_zip:
+                print("  Removing KFX-ZIP format from Calibre...")
+                success, error = remove_format_from_calibre(book_id, 'KFX-ZIP', library_path)
+                if success:
+                    print_ok("  KFX-ZIP format removed")
+                else:
+                    print_warn(f"  Failed to remove KFX-ZIP format: {error}")
+        
+        print()
+    
+    # Display summary
+    print("--------------------------------------------------")
+    print_step("Retry Summary:")
+    print()
+    print_ok(f"Total books retried: {retry_stats['total']}")
+    print_ok(f"Successfully converted: {retry_stats['converted']}")
+    print_ok(f"Successfully merged to Calibre: {retry_stats['merged']}")
+    
+    if retry_stats['failed'] > 0:
+        print_error(f"Failed conversions: {retry_stats['failed']}")
+    
+    # Build summary points
+    summary_points = [
+        f"Retried {retry_stats['total']} timed-out book(s) with alternate method",
+        f"Successfully converted: {retry_stats['converted']} book(s)",
+        f"Successfully merged to Calibre: {retry_stats['merged']} book(s)"
+    ]
+    
+    if retry_stats['failed'] > 0:
+        summary_points.append(f"Failed conversions: {retry_stats['failed']} book(s)")
+    
+    display_phase_summary("4B", "Retry Timed-Out Conversions", summary_points, pause_seconds=5)
+    
+    return retry_stats
+
 def attempt_calibre_import(content_dir, script_dir, calibre_already_confirmed=False, extraction_stats=None):
     """
     Main entry point for Calibre auto-import functionality
@@ -4262,6 +5452,9 @@ def attempt_calibre_import(content_dir, script_dir, calibre_already_confirmed=Fa
         print_step("[PHASE 3a] Checking for existing KFX-ZIP books...")
         removed_count, cleanup_skipped = cleanup_kfx_zip_books(config['library_path'])
         
+        # Silently attempt to reset book ID counter if library is empty
+        reset_calibredb_book_id(config['library_path'])
+        
         # Import all ebooks (use duplicates flag if cleanup was skipped)
         # Pass exclude_asins to skip books that failed key extraction
         # Returns dict with: total, success, failed, timed_out, book_ids, failed_books, timed_out_books
@@ -4305,6 +5498,9 @@ def attempt_calibre_import(content_dir, script_dir, calibre_already_confirmed=Fa
         return 0
 
 def main():
+    # === Pre-Flight Configuration Total Steps ===
+    TOTAL_STEPS = 8
+    
     # === OS CHECK: Windows Only ===
     current_os = platform.system()
     
@@ -4411,14 +5607,15 @@ def main():
             keys_dir = os.path.join(working_dir, "Keys")
             backups_dir = os.path.join(working_dir, "backups")
             
-            # Ensure directories exist
-            os.makedirs(keys_dir, exist_ok=True)
-            os.makedirs(backups_dir, exist_ok=True)
-            
             # Update file paths
             output_key = os.path.join(keys_dir, "kindlekey.txt")
             output_k4i = os.path.join(keys_dir, "kindlekey.k4i")
             backup_json = os.path.join(backups_dir, f"dedrm_backup_{timestamp}.json")
+        
+        # CRITICAL: Always ensure directories exist before Phase 1 extraction
+        # This must happen regardless of fallback status to prevent write failures
+        os.makedirs(keys_dir, exist_ok=True)
+        os.makedirs(backups_dir, exist_ok=True)
         
         # =====================================================================
         # PRE-FLIGHT: CHECK FOR SAVED CONFIGURATION
@@ -4443,7 +5640,7 @@ def main():
                 print()
                 input("Press Enter to start the configuration wizard...")
                 print()
-                saved_config = configure_pre_flight_wizard(user_home)
+                saved_config = configure_pre_flight_wizard(user_home, TOTAL_STEPS)
             else:
                 # Configuration exists and version matches - show options with timer
                 action = prompt_config_action_with_timer(saved_config)
@@ -4453,13 +5650,13 @@ def main():
                     return 0
                 elif action == 'reconfigure':
                     print_step("Starting reconfiguration wizard...")
-                    saved_config = configure_pre_flight_wizard(user_home)
+                    saved_config = configure_pre_flight_wizard(user_home, TOTAL_STEPS)
                 # else action == 'use', proceed with saved config
         else:
             # First run - show wizard
             print_step("First run detected - starting configuration wizard...")
             print()
-            saved_config = configure_pre_flight_wizard(user_home)
+            saved_config = configure_pre_flight_wizard(user_home, TOTAL_STEPS)
         
         # Check if Calibre auto-import is enabled and ask to close Calibre NOW
         calibre_ready = False
@@ -4761,7 +5958,6 @@ def main():
         converted_count = 0
         import_results = None
         conversion_stats = None
-        
         result = attempt_calibre_import(content_dir, script_dir, calibre_already_confirmed=calibre_ready, extraction_stats=extraction_stats)
         
         # Handle result - could be 0 (skipped), or tuple (imported_count, book_ids, config, results)
@@ -4780,6 +5976,80 @@ def main():
             if config.get('convert_to_epub', False) and book_ids:
                 conversion_stats = process_book_conversions(config['library_path'], book_ids, config)
                 converted_count = conversion_stats['merged']
+                
+                # === PHASE 4B: RETRY FAILED CONVERSIONS (INCLUDING TIMEOUTS) ===
+                # Collect ALL failed books (timeouts + other failures)
+                all_failed_books = []
+                
+                # Add timeout books
+                if conversion_stats.get('timeout_books'):
+                    all_failed_books.extend(conversion_stats['timeout_books'])
+                
+                # Add other failed conversions (non-timeout failures)
+                if conversion_stats.get('failed_conversions'):
+                    for book_id, title, author, error_msg in conversion_stats['failed_conversions']:
+                        # Only add if not already in timeout_books
+                        if not any(b[0] == book_id for b in conversion_stats.get('timeout_books', [])):
+                            all_failed_books.append((book_id, title, author))
+                
+                if len(all_failed_books) > 0:
+                    # Get book info for retry
+                    book_info = query_book_info_from_db(config['library_path'], book_ids)
+                    
+                    # Clear screen if configured
+                    if saved_config.get('clear_screen_between_phases', True):
+                        os.system('cls')
+                    
+                    print()
+                    print_colored("═" * 70, 'cyan')
+                    print_colored(f"║{'FAILED CONVERSION RETRY PROMPT':^68}║", 'cyan')
+                    print_colored("═" * 70, 'cyan')
+                    print()
+                    
+                    print_warn(f"{len(all_failed_books)} book(s) failed during conversion")
+                    print()
+                    print("These books failed to convert using the standard method.")
+                    print("They can be retried using an alternate, more robust conversion method.")
+                    print()
+                    print("Failed books:")
+                    for book_id, title, author in all_failed_books[:5]:
+                        print(f"  - {title} by {author}")
+                    if len(all_failed_books) > 5:
+                        print(f"  ... and {len(all_failed_books) - 5} more")
+                    print()
+                    print("Alternate method details:")
+                    print("  - Uses calibre-debug with KFX Input plugin")
+                    print("  - More robust for complex/large books")
+                    print("  - 5-minute timeout per book (vs 3-minute standard)")
+                    print("  - Streams debug output for better visibility")
+                    print()
+                    
+                    while True:
+                        choice = input("Retry failed books with alternate method? (Y/N) [Y]: ").strip().upper()
+                        if choice == '':
+                            choice = 'Y'  # Default to Yes
+                        if choice in ['Y', 'N']:
+                            break
+                        print_error("Please enter Y or N")
+                    
+                    if choice == 'Y':
+                        print()
+                        retry_stats = process_timeout_retries(
+                            config['library_path'],
+                            all_failed_books,
+                            book_info,
+                            config
+                        )
+                        
+                        # Update converted count with retry successes
+                        converted_count += retry_stats['merged']
+                        
+                        # Store retry stats for final summary
+                        conversion_stats['retry_stats'] = retry_stats
+                    else:
+                        print()
+                        print_warn("Skipping retry - failed books will remain unconverted")
+                        print()
         else:
             imported_count = result if result is not None else 0
         
@@ -4872,6 +6142,17 @@ def main():
             if conversion_stats.get('skipped_kfx_zip', 0) > 0:
                 print()
                 print_warn(f"Conversion Skipped: {conversion_stats['skipped_kfx_zip']} .kfx-zip file(s) skipped")
+            
+            # Show retry results if Phase 4B was executed
+            if conversion_stats.get('retry_stats'):
+                retry_stats = conversion_stats['retry_stats']
+                print()
+                print_ok(f"Retry Results (Phase 4B):")
+                print(f"      Retried: {retry_stats['total']} timed-out book(s)")
+                print(f"      Successfully converted: {retry_stats['converted']} book(s)")
+                print(f"      Successfully merged: {retry_stats['merged']} book(s)")
+                if retry_stats.get('failed', 0) > 0:
+                    print_warn(f"      Still failed: {retry_stats['failed']} book(s)")
         
         # Determine if we should pause based on errors and skip_phase_pauses setting
         has_errors = False

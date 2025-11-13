@@ -24,7 +24,6 @@ wheels/
 venv/
 ENV/
 env/
-.venv
 
 # IDE
 .vscode/
@@ -32,80 +31,22 @@ env/
 *.swp
 *.swo
 *~
-.DS_Store
 
-# Sensitive Data - Keys and Configuration
+# Project-specific
 Keys/
-*.k4i
-*.txt
-key_finder_config.json
-calibre_import_config.json
-
-# Backups
-backups/
-*.json.bak
-
-# Logs
 Logs/
-*.log
-
-# Calibre DeDRM Configuration (contains sensitive keys)
-dedrm.json
-dedrm*.json
-
-# Temporary Files
+backups/
 temp_extraction/
-*.tmp
-*.temp
+history.txt
+key_finder_config.json
+_LOCATION_INFO.txt
 
-# Windows
+# OS
+.DS_Store
 Thumbs.db
-ehthumbs.db
-Desktop.ini
-$RECYCLE.BIN/
+desktop.ini
 
-# Kindle Content (user's ebook library)
-My Kindle Content/
-
-# Compiled Executables (keep KFXKeyExtractor28.exe in repo)
-# Uncomment if you don't want to include the extractor
-# *.exe
-
-# Test Files
-test/
-tests/
-*.test.py
-
-# Documentation Build
-docs/_build/
-site/
-
-# Coverage Reports
-htmlcov/
-.coverage
-.coverage.*
-coverage.xml
-*.cover
-
-# PyInstaller
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-.tox/
-.pytest_cache/
-.hypothesis/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# pyenv
-.python-version
-
-# Environment variables
-.env
-.env.local
+# Temporary files
+*.tmp
+*.bak
+*.log
