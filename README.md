@@ -299,39 +299,6 @@ New Functions Added:
 - `create_location_marker()` - Creates helper file for users to locate their data
 - `migrate_config_to_fallback()` - Handles config migration between locations
 
-**Version 2025.11.11.JH**
-
-Fallback Path System & Configuration Management:
-
-- Implemented comprehensive fallback path system for write-protected directories
-- Added automatic detection and handling of read-only script locations (network drives, restricted folders)
-- Created `%LOCALAPPDATA%\Kindle_Key_Finder` fallback location for all operations
-- Updated all file operations to respect fallback paths:
-  - Configuration files (key_finder_config.json)
-  - Extracted keys (Keys/kindlekey.txt, Keys/kindlekey.k4i)
-  - Processing logs (Logs/extraction_logs/, import_logs/, conversion_logs/)
-  - Book history tracking (history.txt)
-  - Temporary extraction folders (temp_extraction/)
-  - Configuration backups (backups/dedrm*backup*\*.json)
-- Added `_LOCATION_INFO.txt` marker file to help users locate their files
-- Implemented smart config migration between script directory and AppData
-- Fixed `discover_config_location()` to prioritize writable script directory
-- Prevents config duplication when moving between protected/unprotected folders
-- All log writing functions now use validated working directory
-- Book history tracking properly uses fallback paths
-- Temporary file operations respect fallback location
-
-Kindle Process Monitoring Fix:
-
-- Fixed Kindle.exe monitoring issue in auto-launch feature
-- Added `is_kindle_running()` function to detect if Kindle is already running
-- Updated `launch_and_wait_for_kindle()` to handle both scenarios:
-  - Kindle already running: Detects existing process and waits for closure
-  - Kindle not running: Launches Kindle.exe and waits for closure
-- Implemented polling mechanism (checks every 2 seconds) for reliable process monitoring
-- Uses Windows-native `tasklist` command (no external dependencies)
-- Handles both pre-existing and newly launched Kindle processes consistently
-
 **Version 2025.11.09.JH**
 
 Auto-Launch Kindle & Book History Tracking:
