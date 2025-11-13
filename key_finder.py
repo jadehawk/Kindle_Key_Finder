@@ -4230,7 +4230,7 @@ def query_book_paths_from_db(library_path, book_ids):
 def find_source_file_in_directory(book_dir):
     """
     Find the source ebook file in the book directory.
-    Searches for Kindle format files: .kfx, .azw, .azw3, or .kfx-zip
+    Searches for Kindle format files: .kfx, .azw, .azw3, .kfx-zip, or .mobi
     
     Args:
         book_dir: Path to the book directory in Calibre library
@@ -4246,7 +4246,7 @@ def find_source_file_in_directory(book_dir):
         
         for filename in os.listdir(book_dir):
             lower_name = filename.lower()
-            if lower_name.endswith(('.kfx', '.azw', '.azw3', '.kfx-zip')):
+            if lower_name.endswith(('.kfx', '.azw', '.azw3', '.kfx-zip', '.mobi')):
                 is_kfx_zip = lower_name.endswith('.kfx-zip')
                 return filename, is_kfx_zip
         
@@ -5094,7 +5094,7 @@ def process_book_conversions(library_path, book_ids, calibre_config=None):
         source_filename, is_kfx_zip = find_source_file_in_directory(book_dir)
         
         if not source_filename:
-            error_msg = f"No source file (KFX/AZW/AZW3/KFX-ZIP) found in {book_path}"
+            error_msg = f"No source file (KFX/AZW/AZW3/KFX-ZIP/MOBI) found in {book_path}"
             print_error(error_msg)
             stats['failed'] += 1
             stats['errors'].append(f"Book {book_id}: {error_msg}")
@@ -5118,8 +5118,10 @@ def process_book_conversions(library_path, book_ids, calibre_config=None):
         print(f"  Source: {source_filename}")
         print(f"  Target: {epub_filename}")
         
-        # Detect if this is AZW3 format
+        # Detect format for conversion routing
         is_azw3 = source_filename.lower().endswith('.azw3')
+        is_mobi = source_filename.lower().endswith('.mobi')
+        is_azw = source_filename.lower().endswith('.azw')
         
         # Determine working_dir for temp files
         script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -5138,10 +5140,17 @@ def process_book_conversions(library_path, book_ids, calibre_config=None):
         
         # Convert to EPUB (route based on format)
         if is_azw3:
+            # AZW3 uses MOBI intermediate for better conversion
             print("  Converting to EPUB (via MOBI intermediate)...")
             success, error, is_kfx_error = convert_azw3_via_mobi(source_path, epub_path, working_dir=working_dir)
             error_type = {'is_kfx_error': is_kfx_error, 'is_timeout': False, 'is_drm': False}
+        elif is_mobi or is_azw:
+            # MOBI and AZW convert directly to EPUB
+            print("  Converting to EPUB...")
+            book_info_str = f"{book_id} - {title} by {author}"
+            success, error, error_type = convert_book_to_epub(source_path, epub_path, raw_log_path=raw_log_path, book_info=book_info_str)
         else:
+            # KFX and KFX-ZIP use standard conversion
             print("  Converting to EPUB...")
             book_info_str = f"{book_id} - {title} by {author}"
             success, error, error_type = convert_book_to_epub(source_path, epub_path, raw_log_path=raw_log_path, book_info=book_info_str)
@@ -5182,18 +5191,22 @@ def process_book_conversions(library_path, book_ids, calibre_config=None):
             stats['merged'] += 1
             
             # Handle source file management based on user choice
+            # Only delete KFX and KFX-ZIP formats (preserve MOBI/AZW/AZW3)
             if source_management == 'delete_source':
-                # Determine the actual source format to delete
+                # Determine the actual source format
                 source_ext = os.path.splitext(source_filename)[1].upper().replace('.', '')
                 
-                # Delete the actual source format (KFX, AZW3, AZW, or KFX-ZIP)
-                print(f"  Removing {source_ext} format from Calibre...")
-                success, error = remove_format_from_calibre(book_id, source_ext, library_path)
-                if success:
-                    print_ok(f"  {source_ext} format removed")
-                    stats['source_files_deleted'] += 1
+                # Only delete KFX and KFX-ZIP formats
+                if source_ext in ['KFX', 'KFX-ZIP']:
+                    print(f"  Removing {source_ext} format from Calibre...")
+                    success, error = remove_format_from_calibre(book_id, source_ext, library_path)
+                    if success:
+                        print_ok(f"  {source_ext} format removed")
+                        stats['source_files_deleted'] += 1
+                    else:
+                        print_warn(f"  Failed to remove {source_ext} format: {error}")
                 else:
-                    print_warn(f"  Failed to remove {source_ext} format: {error}")
+                    print(f"  Keeping {source_ext} format (only KFX/KFX-ZIP are deleted)")
             
             elif source_management == 'delete_kfx_zip_only' and is_kfx_zip:
                 # Delete only .kfx-zip files
@@ -5390,22 +5403,10 @@ def process_timeout_retries(library_path, timeout_books, book_info, calibre_conf
             print_ok("  EPUB format merged successfully")
             retry_stats['merged'] += 1
             
-            # Handle source file management
-            if source_management == 'delete_source':
-                source_ext = os.path.splitext(source_filename)[1].upper().replace('.', '')
-                print(f"  Removing {source_ext} format from Calibre...")
-                success, error = remove_format_from_calibre(book_id, source_ext, library_path)
-                if success:
-                    print_ok(f"  {source_ext} format removed")
-                else:
-                    print_warn(f"  Failed to remove {source_ext} format: {error}")
-            elif source_management == 'delete_kfx_zip_only' and is_kfx_zip:
-                print("  Removing KFX-ZIP format from Calibre...")
-                success, error = remove_format_from_calibre(book_id, 'KFX-ZIP', library_path)
-                if success:
-                    print_ok("  KFX-ZIP format removed")
-                else:
-                    print_warn(f"  Failed to remove KFX-ZIP format: {error}")
+            # IMPORTANT: Phase 4B uses alternate conversion methods
+            # We NEVER delete source files when alternate methods are used
+            # This preserves the original files for troubleshooting problematic books
+            print("  Keeping source format (alternate method used)")
         
         print()
     
