@@ -8,7 +8,7 @@ No external dependencies - uses the same methods as the plugin
 """
 
 # Script Version
-SCRIPT_VERSION = "2025.11.13.JH"
+SCRIPT_VERSION = "2025.11.14.JH"
 
 # Unified Configuration File
 CONFIG_FILE = "key_finder_config.json"
@@ -167,18 +167,6 @@ def print_banner_and_version():
     # Check for latest version from GitHub
     print_step("Checking for updates...")
     latest_version, error = check_latest_version()
-
-def display_credits_and_links():
-    """
-    Display final credits page with links and acknowledgments
-    Can be called from multiple locations for consistency
-    """
-    os.system('cls')
-    print()
-    print_banner_and_version()
-    
-    # Check for latest version (self-contained)
-    latest_version, error = check_latest_version()
     
     if latest_version:
         comparison = compare_versions(SCRIPT_VERSION, latest_version)
@@ -186,6 +174,7 @@ def display_credits_and_links():
         if comparison is None:
             # Parsing failed - fall back to string comparison
             print_colored("  (Unable to parse version - check manually)", 'cyan')
+            print_colored("  Visit https://techy-notes.com for the latest version", 'cyan')
             print()
         elif comparison < 0:
             # Local version is older than GitHub version
@@ -206,8 +195,53 @@ def display_credits_and_links():
             print_colored("  ✓   You are running the latest version", 'green')
             print()
     else:
-        # Silently ignore version check failures - don't show error to user
-        print_colored("  (Unable to check for updates - continuing...)", 'cyan')
+        # Connection failed - show fallback message with URL
+        print_colored("  (Unable to check for updates - connection failed)", 'cyan')
+        print_colored("  Visit https://techy-notes.com for the latest version", 'cyan')
+        print()
+
+def display_credits_and_links():
+    """
+    Display final credits page with links and acknowledgments
+    Can be called from multiple locations for consistency
+    """
+    os.system('cls')
+    print()
+    print_banner_and_version()
+    
+    # Check for latest version (self-contained)
+    latest_version, error = check_latest_version()
+    
+    if latest_version:
+        comparison = compare_versions(SCRIPT_VERSION, latest_version)
+        
+        if comparison is None:
+            # Parsing failed - fall back to string comparison
+            print_colored("  (Unable to parse version - check manually)", 'cyan')
+            print_colored("  Visit https://techy-notes.com for the latest version", 'cyan')
+            print()
+        elif comparison < 0:
+            # Local version is older than GitHub version
+            print()
+            print_colored("=" * 70, 'yellow')
+            print_colored(f"  ⚠   NEW VERSION AVAILABLE: {latest_version}", 'yellow')
+            print_colored(f"  Current version: {SCRIPT_VERSION}", 'yellow')
+            print_colored("  Visit https://techy-notes.com for the latest version", 'yellow')
+            print_colored("=" * 70, 'yellow')
+            print()
+        elif comparison > 0:
+            # Local version is NEWER than GitHub version (dev/testing scenario)
+            print_colored(f"  ℹ   You are running a development version ({SCRIPT_VERSION})", 'cyan')
+            print_colored(f"  Latest stable release: {latest_version}", 'cyan')
+            print()
+        else:
+            # Versions are equal
+            print_colored("  ✓   You are running the latest version", 'green')
+            print()
+    else:
+        # Connection failed - show fallback message with URL
+        print_colored("  (Unable to check for updates - connection failed)", 'cyan')
+        print_colored("  Visit https://techy-notes.com for the latest version", 'cyan')
         print()
     
     print("For the latest version of this script and updates, visit:")
@@ -250,6 +284,7 @@ def display_phase_banner(phase_num, phase_name):
     print_colored("═" * 70, 'cyan')
     print_colored(f"║{f'PHASE {phase_num}':^68}║", 'cyan')
     print_colored(f"║{phase_name.upper():^68}║", 'cyan')
+    print_colored(f"║{f'Script Version: {SCRIPT_VERSION}':^68}║", 'cyan')
     print_colored("═" * 70, 'cyan')
     print()
 
