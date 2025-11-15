@@ -268,6 +268,31 @@ This tool is intended for use with ebooks you have legally purchased. Users are 
 
 ## Version History
 
+**Version 2025.11.15.JH**
+
+Calibre Auto-Continue & Failsafe Key Cleanup:
+
+- **Calibre Auto-Continue**: Script now automatically continues once Calibre is detected as closed
+  - Removed manual "Press Enter to continue" prompts after closing Calibre
+  - Added real-time process detection loop that monitors for Calibre closure
+  - Applies to both pre-flight configuration and Phase 3 import preparation
+  - Provides clear status messages: "Waiting for Calibre to close..." → "Calibre has closed - continuing with script..."
+  - Improves user experience by eliminating unnecessary manual confirmations
+- **Failsafe Key Cleanup**: Enhanced Phase 1 key cleanup to check both possible storage locations
+  - Cleans up keys from BOTH script directory and AppData fallback location
+  - Prevents confusing "No existing kindlekey.txt found" warnings
+  - Ensures clean slate regardless of which location was used in previous run
+  - Silent operation when no keys exist (first run scenario)
+  - Shows confirmation only when files are actually deleted
+  - Handles edge case where validation determines different working directory between runs
+
+Updated Functions:
+
+- `warn_close_calibre()` - Now auto-continues when Calibre closes (no manual prompt)
+- `verify_calibre_closed_with_loop()` - Simplified to pure auto-detection (removed manual option)
+- `prompt_calibre_import_settings()` - Auto-continues after Calibre closes during configuration
+- Phase 1 cleanup logic - Checks both script_dir/Keys and AppData/Keys locations
+
 **Version 2025.11.13.JH**
 
 Fallback Path System & Write-Protected Directory Support:

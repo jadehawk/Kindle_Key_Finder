@@ -8,7 +8,7 @@ No external dependencies - uses the same methods as the plugin
 """
 
 # Script Version
-SCRIPT_VERSION = "2025.11.14.JH"
+SCRIPT_VERSION = "2025.11.15.JH"
 
 # Unified Configuration File
 CONFIG_FILE = "key_finder_config.json"
@@ -759,8 +759,8 @@ def find_kindle_exe():
 
 def launch_and_wait_for_kindle():
     """
-    Launch Kindle.exe and wait for it to close
-    Detects if Kindle is already running and monitors accordingly
+    Launch Kindle.exe and allow user to press any key to continue
+    User does not need to close Kindle - it's just a trigger if they want to use it
     Returns: (success: bool, error_message: str)
     """
     try:
@@ -770,11 +770,26 @@ def launch_and_wait_for_kindle():
         if already_running:
             print_warn("Kindle is already running")
             print()
-            print_warn("Please use Kindle to download any books you want to process")
-            print_warn("When finished, close Kindle to continue with key extraction")
+            print_ok("While Kindle for PC is Open Download The books you")
+            print_ok("want to DeDRM and when ready Close Kindle for PC")
+            print_ok("to begin the Key extraction")
             print()
             print_step("Waiting for Kindle to close...")
-            print("  (Script will automatically continue when Kindle exits)")
+            print("  (Script will automatically continue when Kindle closes)")
+            print()
+            print_warn("Or press any key to skip waiting and continue immediately")
+            print()
+            
+            # Wait for Kindle to close OR user to press a key
+            while is_kindle_running():
+                if msvcrt.kbhit():
+                    msvcrt.getch()  # Consume the keypress
+                    print_ok("User skipped waiting - continuing with script...")
+                    print()
+                    return True, ""
+                time.sleep(1)  # Check every second
+            
+            print_ok("Kindle has closed - continuing with script...")
             print()
         else:
             # Find Kindle.exe location
@@ -795,26 +810,37 @@ def launch_and_wait_for_kindle():
             # Launch Kindle
             subprocess.Popen([kindle_exe])
             
-            print_ok("Kindle launched successfully")
+            # Wait a moment for Kindle to start
+            time.sleep(2)
+            
+            print_warn("Kindle launched successfully")
             print()
-            print_warn("Please use Kindle to download any books you want to process")
-            print_warn("When finished, close Kindle to continue with key extraction")
+            print_ok("While Kindle for PC is Open Download The books you")
+            print_ok("want to DeDRM and when ready Close Kindle for PC")
+            print_ok("to begin the Key extraction")
             print()
             print_step("Waiting for Kindle to close...")
-            print("  (Script will automatically continue when Kindle exits)")
+            print("  (Script will automatically continue when Kindle closes)")
             print()
-        
-        # Poll for Kindle process closure (works for both launched and already-running)
-        while is_kindle_running():
-            time.sleep(2)  # Check every 2 seconds
-        
-        print_ok("Kindle closed - continuing with script")
-        print()
+            print_warn("Or press any key to skip waiting and continue immediately")
+            print()
+            
+            # Wait for Kindle to close OR user to press a key
+            while is_kindle_running():
+                if msvcrt.kbhit():
+                    msvcrt.getch()  # Consume the keypress
+                    print_ok("User skipped waiting - continuing with script...")
+                    print()
+                    return True, ""
+                time.sleep(1)  # Check every second
+            
+            print_ok("Kindle has closed - continuing with script...")
+            print()
         
         return True, ""
         
     except Exception as e:
-        return False, f"Failed to launch/monitor Kindle: {str(e)}"
+        return False, f"Failed to launch Kindle: {str(e)}"
 
 def create_temp_kindle_copy(source_dir):
     """
@@ -3406,12 +3432,16 @@ def prompt_calibre_import_settings():
         print("be completely closed.")
         print()
         
-        input("Press Enter once Calibre is closed to continue...")
+        print_step("Waiting for Calibre to close...")
+        print("  (Script will automatically continue when Calibre closes)")
         print()
         
-        # VERIFY closure with retry loop
-        if not verify_calibre_closed_with_loop():
-            raise Exception("Configuration cancelled - Calibre must be closed")
+        # Auto-detection loop - wait until Calibre closes
+        while is_calibre_running():
+            time.sleep(1)  # Check every second
+        
+        print_ok("Calibre has closed - continuing with configuration...")
+        print()
     
     # Get and confirm library path
     library_path = get_and_confirm_library_path()
@@ -4135,45 +4165,36 @@ def is_calibre_running():
 
 def verify_calibre_closed_with_loop():
     """
-    Verify Calibre is closed with retry loop
+    Verify Calibre is closed with auto-detection loop
+    Waits until Calibre closes, no manual intervention required
     Returns: True if Calibre is closed, False if user wants to exit
     """
-    while True:
-        if not is_calibre_running():
-            print_ok("Calibre confirmed closed - proceeding")
-            print()
-            return True
-        
-        # Calibre is still running
-        print_warn("Calibre is still running!")
+    if not is_calibre_running():
+        print_ok("Calibre confirmed closed - proceeding")
         print()
-        print("Options:")
-        print("  [R] Retry - Check again after closing Calibre")
-        print("  [Q] Quit - Exit script")
-        print()
-        
-        while True:
-            choice = input("Your choice (R/Q) [R]: ").strip().upper()
-            if choice == '':
-                choice = 'R'  # Default to Retry
-            if choice in ['R', 'Q']:
-                break
-            print_error("Invalid choice. Please enter R or Q.")
-        
-        if choice == 'R':
-            print()
-            print_step("Checking again...")
-            continue  # Loop back to check again
-        elif choice == 'Q':
-            print()
-            print_warn("Script cancelled by user")
-            return False
+        return True
+    
+    # Calibre is still running - wait for it to close
+    print_warn("Calibre is still running!")
+    print()
+    print_step("Waiting for Calibre to close...")
+    print("  (Script will automatically continue when Calibre closes)")
+    print()
+    
+    # Auto-detection loop - wait until Calibre closes
+    while is_calibre_running():
+        time.sleep(1)  # Check every second
+    
+    print_ok("Calibre has closed - continuing with script...")
+    print()
+    return True
 
 def warn_close_calibre():
     """
     Warn user to close Calibre before import
     Auto-detects if Calibre is running and skips prompt if not
-    Returns: True if user confirms or Calibre not running, False otherwise
+    Auto-continues once Calibre is detected as closed
+    Returns: True if Calibre not running or successfully closed, False if user quits
     """
     # Check if Calibre is running
     if not is_calibre_running():
@@ -4196,11 +4217,17 @@ def warn_close_calibre():
     print("-- Good Luck --")
     print()
     
-    input("Press Enter once Calibre is closed to continue...")
+    print_step("Waiting for Calibre to close...")
+    print("  (Script will automatically continue when Calibre closes)")
     print()
     
-    # VERIFY closure with retry loop
-    return verify_calibre_closed_with_loop()
+    # Auto-detection loop - wait until Calibre closes
+    while is_calibre_running():
+        time.sleep(1)  # Check every second
+    
+    print_ok("Calibre has closed - continuing with script...")
+    print()
+    return True
 
 # ============================================================================
 # KFX TO EPUB CONVERSION FUNCTIONS
@@ -5781,6 +5808,7 @@ def main():
             print()
             print_colored("═" * 70, 'cyan')
             print_colored(f"║{'AUTO-LAUNCH KINDLE':^68}║", 'cyan')
+            print_colored(f"║{f'Script Version: {SCRIPT_VERSION}':^68}║", 'cyan')
             print_colored("═" * 70, 'cyan')
             print()
             
@@ -5820,13 +5848,19 @@ def main():
         
         display_phase_banner(1, "Key Extraction")
 
-        # Cleanup previous files
-        for file_path in [output_key, output_k4i]:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                print_ok(f"Previous {os.path.basename(file_path)} deleted.")
-            else:
-                print_warn(f"No existing {os.path.basename(file_path)} found.")
+        # Cleanup previous files from both possible locations (failsafe)
+        # Previous run might have used different location based on write permissions
+        cleanup_locations = [
+            os.path.join(script_dir, "Keys"),  # Script directory
+            os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder", "Keys")  # Fallback
+        ]
+        
+        for location in cleanup_locations:
+            for filename in ["kindlekey.txt", "kindlekey.k4i"]:
+                file_path = os.path.join(location, filename)
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                    print_ok(f"Previous {filename} deleted from {os.path.basename(location)}")
 
         print()
         
