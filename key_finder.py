@@ -8,7 +8,7 @@ No external dependencies - uses the same methods as the plugin
 """
 
 # Script Version
-SCRIPT_VERSION = "2025.11.15.JH"
+SCRIPT_VERSION = "2025.11.20.JH"
 
 # Unified Configuration File
 CONFIG_FILE = "key_finder_config.json"
@@ -452,6 +452,25 @@ def filter_sensitive_output(text, hide_sensitive=False):
         filtered_lines.append(filtered_line)
     
     return '\n'.join(filtered_lines)
+
+def display_progress_timer(message, timeout_seconds, timer_stopped_event):
+    """
+    Reusable progress timer display function
+    Shows elapsed time vs total timeout in [MM:SS / MM:SS] format
+    
+    Args:
+        message: Text to display (e.g., "Converting to EPUB", "Step 1/2 (AZW3→MOBI)")
+        timeout_seconds: Total timeout duration in seconds
+        timer_stopped_event: threading.Event() to monitor for stop signal
+    """
+    start_time = time.time()
+    while not timer_stopped_event.is_set():
+        elapsed = int(time.time() - start_time)
+        minutes, seconds = divmod(elapsed, 60)
+        timeout_mins, timeout_secs = divmod(timeout_seconds, 60)
+        print(f"\r  {message}.. [ {minutes:02d}:{seconds:02d} / {timeout_mins:02d}:{timeout_secs:02d} ]", 
+              end='', flush=True)
+        time.sleep(1)
 
 def get_kindle_content_path(default_path):
     """
@@ -1087,7 +1106,7 @@ def scan_kindle_content_directory(content_dir):
         print_error(f"Error scanning content directory: {e}")
         return []
 
-def extract_keys_from_single_book(extractor_path, kindle_dir, book_folder, output_key, output_k4i, asin, book_title, working_dir=None, raw_log_path=None):
+def extract_keys_from_single_book(extractor_path, kindle_dir, book_folder, output_key, output_k4i, asin, book_title, working_dir=None, raw_log_path=None, book_prefix=""):
     """
     Extract keys from a single book folder using temporary directory workaround
     Returns: (success: bool, dsn: str, tokens: str, error_msg: str, asin: str)
@@ -1125,6 +1144,27 @@ def extract_keys_from_single_book(extractor_path, kindle_dir, book_folder, outpu
         temp_book = os.path.join(temp_dir, book_name)
         shutil.copytree(book_folder, temp_book)
         
+        # Timer display thread (custom for extraction - reprints full line)
+        # START TIMER FIRST - before subprocess creation
+        timer_stopped = threading.Event()
+        timeout_seconds = 60
+        
+        def display_extraction_timer():
+            start_time = time.time()
+            while not timer_stopped.is_set():
+                elapsed = int(time.time() - start_time)
+                minutes, seconds = divmod(elapsed, 60)
+                timeout_mins, timeout_secs = divmod(timeout_seconds, 60)
+                timer_str = f" [ {minutes:02d}:{seconds:02d} / {timeout_mins:02d}:{timeout_secs:02d} ]"
+                
+                # Reprint entire line: carriage return + book info + timer
+                print(f"\r{book_prefix}{timer_str}", end='', flush=True)
+                time.sleep(1)
+        
+        timer_thread = threading.Thread(target=display_extraction_timer, daemon=True)
+        timer_thread.start()
+        
+        # NOW start subprocess - timer is already running
         # Run extractor on temp directory (not individual book folder)
         # This gives the extractor the directory structure it expects
         cmd = [extractor_in_kindle, temp_dir, output_key, output_k4i]
@@ -1167,8 +1207,20 @@ def extract_keys_from_single_book(extractor_path, kindle_dir, book_folder, outpu
         
         # Wait for process to complete (with timeout)
         try:
-            process.wait(timeout=60)  # 60 second timeout per book
+            process.wait(timeout=timeout_seconds)
+            # Stop timer, clear entire line, then reprint book line
+            timer_stopped.set()
+            timer_thread.join(timeout=1)
+            # Clear line completely (100 chars to ensure timer is fully removed)
+            print("\r" + " " * 100 + "\r", end='', flush=True)
+            print(f"{book_prefix}", end='', flush=True)
         except subprocess.TimeoutExpired:
+            # Stop timer, clear entire line, then reprint book line on timeout
+            timer_stopped.set()
+            timer_thread.join(timeout=1)
+            # Clear line completely (100 chars to ensure timer is fully removed)
+            print("\r" + " " * 100 + "\r", end='', flush=True)
+            print(f"{book_prefix}", end='', flush=True)
             process.kill()
             # Log to raw log if enabled
             if raw_log_path:
@@ -1649,23 +1701,21 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
             # Get folder name (e.g., "B00JBVUJM8_EBOK")
             folder_name = os.path.basename(book_folder)
             
-            # Fetch book title from Amazon metadata only if enabled
+            # Build book prefix for timer display based on fetch_titles configuration
             if fetch_titles:
                 fetched_title = fetch_book_title_from_asin(asin)
-                # Display: folder_name - book_title
-                print(f"[{idx}/{len(book_folders)}] {folder_name} - {fetched_title}...", end=' ', flush=True)
+                book_prefix = f"[{idx}/{len(book_folders)}] {folder_name} - {fetched_title}..."
             else:
-                # Display: folder_name only
-                print(f"[{idx}/{len(book_folders)}] {folder_name}...", end=' ', flush=True)
+                book_prefix = f"[{idx}/{len(book_folders)}] {folder_name}..."
             
-            # Extract keys from single book (pass validated working_dir and raw_log_path)
+            # Extract keys from single book (pass book_prefix for timer display)
             success, book_dsn, book_tokens, error_msg, _ = extract_keys_from_single_book(
                 extractor_path, kindle_dir, book_folder, temp_key, temp_k4i, asin, book_title, 
-                working_dir=working_dir, raw_log_path=raw_log_path
+                working_dir=working_dir, raw_log_path=raw_log_path, book_prefix=book_prefix
             )
             
             if success:
-                print_ok("✓")
+                print_colored(" [OK] ✓", 'green')
                 extraction_stats['success'] += 1
                 
                 # Store DSN and tokens from first successful extraction
@@ -1691,7 +1741,7 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
                 except Exception:
                     pass
             else:
-                print_error(f"✗ FAILED")
+                print_colored(" [ERROR] ✗ FAILED", 'red')
                 extraction_stats['failed'] += 1
                 
                 # Fetch book title from ASIN for better error reporting
@@ -1807,16 +1857,51 @@ def create_dedrm_config(kindle_key, kindlekey_txt_path, reference_json_path=None
 # WRITE PERMISSIONS & PATH DISCOVERY FUNCTIONS
 # ============================================================================
 
+def is_cloud_synced_location(directory):
+    """
+    Detect if directory is inside a cloud sync folder
+    Returns: (is_cloud: bool, cloud_service: str or None)
+    """
+    dir_lower = directory.lower()
+    
+    # Common cloud sync folder patterns
+    cloud_patterns = {
+        'onedrive': ['onedrive', '\\onedrive\\', '/onedrive/'],
+        'google-drive': ['google drive', '\\google drive\\', '/google drive/', 'googledrive'],
+        'dropbox': ['dropbox', '\\dropbox\\', '/dropbox/'],
+        'icloud': ['icloud', '\\icloud\\', '/icloud/', 'icloud drive'],
+        'box': ['\\box sync\\', '/box sync/', '\\box\\', '/box/'],
+        'sync': ['sync.com', '\\sync\\', '/sync/']  # Sync.com
+    }
+    
+    for service, patterns in cloud_patterns.items():
+        for pattern in patterns:
+            if pattern in dir_lower:
+                return True, service
+    
+    return False, None
+
 def check_write_permissions(directory):
     """
-    Test if we can write to a directory
+    Enhanced write permission check:
+    1. Detects cloud sync folders proactively (OneDrive, Google Drive, etc.)
+    2. Tests actual directory creation (not just files)
+    
+    Cloud folders can cause intermittent "Access Denied" errors during
+    temp directory creation due to sync conflicts.
+    
     Returns: (can_write: bool, error_msg: str or None)
     """
-    test_file = os.path.join(directory, ".write_test_temp")
+    # First check: Is this a cloud-synced location?
+    is_cloud, cloud_service = is_cloud_synced_location(directory)
+    if is_cloud:
+        return False, f"Cloud sync folder detected ({cloud_service}) - may cause access issues"
+    
+    # Second check: Can we actually create a directory here?
+    test_dir = os.path.join(directory, ".write_test_temp_dir")
     try:
-        with open(test_file, 'w') as f:
-            f.write("test")
-        os.remove(test_file)
+        os.makedirs(test_dir, exist_ok=True)
+        os.rmdir(test_dir)
         return True, None
     except Exception as e:
         return False, str(e)
@@ -2274,11 +2359,23 @@ def display_validation_results(report):
     print("└─────────────────────────────┴────────────┴────────────────────────────────────────┘")
     print()
     
-    # Show fallback location details if applicable
+    # Show fallback location details if applicable  
     if report['is_fallback']:
-        print_warn("Note: Using fallback location due to write permission issues")
+        print_warn("IMPORTANT: Using fallback location for file operations")
+        print(f"   Reason: {report['fallback_reason']}")
         print(f"   Working directory: {report['working_dir']}")
         print()
+        # Check if it's specifically a cloud folder issue
+        if 'cloud' in report['fallback_reason'].lower():
+            print_colored("   ⚠  CLOUD SYNC FOLDER DETECTED", 'yellow')
+            print("   Cloud folders (OneDrive, Google Drive, etc.) can cause:")
+            print("   - Intermittent 'Access Denied' errors during temp file creation")
+            print("   - File sync conflicts during extraction")
+            print("   - Unreliable directory creation")
+            print()
+            print("   All files will be safely stored in:")
+            print(f"   {report['working_dir']}")
+            print()
     
     # Display warnings if any
     if report['warnings']:
@@ -3758,17 +3855,11 @@ def import_single_book(book_path, library_path, use_duplicates=False, timeout_se
         # Timer display thread
         timer_stopped = threading.Event()
         
-        def display_timer():
-            start_time = time.time()
-            while not timer_stopped.is_set():
-                elapsed = int(time.time() - start_time)
-                minutes, seconds = divmod(elapsed, 60)
-                timeout_mins, timeout_secs = divmod(timeout_seconds, 60)
-                print(f"\r [{minutes:02d}:{seconds:02d} / {timeout_mins:02d}:{timeout_secs:02d}]", 
-                      end='', flush=True)
-                time.sleep(1)
-        
-        timer_thread = threading.Thread(target=display_timer, daemon=True)
+        timer_thread = threading.Thread(
+            target=display_progress_timer,
+            args=("Importing", timeout_seconds, timer_stopped),
+            daemon=True
+        )
         timer_thread.start()
         
         # Wait for process with timeout
@@ -4350,17 +4441,11 @@ def convert_book_to_epub(source_path, epub_path, raw_log_path=None, book_info=No
         timer_stopped = threading.Event()
         timeout_seconds = 180  # 3 minutes
         
-        def display_timer():
-            start_time = time.time()
-            while not timer_stopped.is_set():
-                elapsed = int(time.time() - start_time)
-                minutes, seconds = divmod(elapsed, 60)
-                timeout_mins, timeout_secs = divmod(timeout_seconds, 60)
-                print(f"\r  Converting to EPUB.. [ {minutes:02d}:{seconds:02d} / {timeout_mins:02d}:{timeout_secs:02d} ]", 
-                      end='', flush=True)
-                time.sleep(1)
-        
-        timer_thread = threading.Thread(target=display_timer, daemon=True)
+        timer_thread = threading.Thread(
+            target=display_progress_timer,
+            args=("Converting to EPUB", timeout_seconds, timer_stopped),
+            daemon=True
+        )
         timer_thread.start()
         
         # Wait for process with timeout
@@ -4529,14 +4614,52 @@ def convert_azw3_via_mobi(source_path, epub_path, working_dir=None):
             '--output-profile=tablet'
         ]
         
-        result_mobi = subprocess.run(
+        # Start Step 1 subprocess
+        process_mobi = subprocess.Popen(
             cmd_mobi,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding='utf-8',
-            errors='replace',
-            timeout=300
+            errors='replace'
         )
+        
+        # Timer display thread for Step 1
+        timer_stopped_step1 = threading.Event()
+        timeout_seconds_step1 = 300
+        
+        timer_thread_step1 = threading.Thread(
+            target=display_progress_timer,
+            args=("Step 1/2 (AZW3→MOBI)", timeout_seconds_step1, timer_stopped_step1),
+            daemon=True
+        )
+        timer_thread_step1.start()
+        
+        # Wait for Step 1 with timeout
+        try:
+            stdout_mobi, stderr_mobi = process_mobi.communicate(timeout=timeout_seconds_step1)
+            result_mobi_returncode = process_mobi.returncode
+            # Stop timer and clear the line
+            timer_stopped_step1.set()
+            timer_thread_step1.join(timeout=1)
+            print("\r" + " " * 80 + "\r", end='', flush=True)
+        except subprocess.TimeoutExpired:
+            # Stop timer and clear the line
+            timer_stopped_step1.set()
+            timer_thread_step1.join(timeout=1)
+            print("\r" + " " * 80 + "\r", end='', flush=True)
+            process_mobi.kill()
+            stdout_mobi, stderr_mobi = process_mobi.communicate()
+            return False, "Step 1 timeout (5 minutes)", False
+        
+        # Create result-like object for Step 1
+        class Result:
+            def __init__(self, returncode, stdout, stderr):
+                self.returncode = returncode
+                self.stdout = stdout
+                self.stderr = stderr
+        
+        result_mobi = Result(result_mobi_returncode, stdout_mobi, stderr_mobi)
         
         if result_mobi.returncode != 0 or not os.path.exists(temp_mobi_path):
             error_msg = result_mobi.stderr if result_mobi.stderr else "AZW3 to MOBI conversion failed"
@@ -4553,14 +4676,46 @@ def convert_azw3_via_mobi(source_path, epub_path, working_dir=None):
             '--epub-version=3'
         ]
         
-        result_epub = subprocess.run(
+        # Start Step 2 subprocess
+        process_epub = subprocess.Popen(
             cmd_epub,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding='utf-8',
-            errors='replace',
-            timeout=300
+            errors='replace'
         )
+        
+        # Timer display thread for Step 2
+        timer_stopped_step2 = threading.Event()
+        timeout_seconds_step2 = 300
+        
+        timer_thread_step2 = threading.Thread(
+            target=display_progress_timer,
+            args=("Step 2/2 (MOBI→EPUB)", timeout_seconds_step2, timer_stopped_step2),
+            daemon=True
+        )
+        timer_thread_step2.start()
+        
+        # Wait for Step 2 with timeout
+        try:
+            stdout_epub, stderr_epub = process_epub.communicate(timeout=timeout_seconds_step2)
+            result_epub_returncode = process_epub.returncode
+            # Stop timer and clear the line
+            timer_stopped_step2.set()
+            timer_thread_step2.join(timeout=1)
+            print("\r" + " " * 80 + "\r", end='', flush=True)
+        except subprocess.TimeoutExpired:
+            # Stop timer and clear the line
+            timer_stopped_step2.set()
+            timer_thread_step2.join(timeout=1)
+            print("\r" + " " * 80 + "\r", end='', flush=True)
+            process_epub.kill()
+            stdout_epub, stderr_epub = process_epub.communicate()
+            return False, "Step 2 timeout (5 minutes)", False
+        
+        # Create result-like object for Step 2
+        result_epub = Result(result_epub_returncode, stdout_epub, stderr_epub)
         
         if result_epub.returncode == 0 and os.path.exists(epub_path):
             return True, "", False
@@ -6130,6 +6285,7 @@ def main():
                     print()
                     print_colored("═" * 70, 'cyan')
                     print_colored(f"║{'FAILED CONVERSION RETRY PROMPT':^68}║", 'cyan')
+                    print_colored(f"║{f'Script Version: {SCRIPT_VERSION}':^68}║", 'cyan')
                     print_colored("═" * 70, 'cyan')
                     print()
                     

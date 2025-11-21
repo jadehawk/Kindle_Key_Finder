@@ -268,6 +268,37 @@ This tool is intended for use with ebooks you have legally purchased. Users are 
 
 ## Version History
 
+**Version 2025.11.20.JH**
+
+Cloud Folder Detection & Write Permission Enhancement:
+
+- **Proactive Cloud Folder Detection**: Script now detects and avoids cloud-synced locations before attempting write operations
+  - Added `is_cloud_synced_location()` helper function to identify cloud sync folders
+  - Detects OneDrive, Google Drive, Dropbox, iCloud, Box, and Sync.com folders
+  - Prevents intermittent "Access Denied" errors during temp directory creation
+  - Cloud folders can cause sync conflicts during extraction operations
+- **Enhanced Write Permission Checks**: Improved `check_write_permissions()` with two-tier validation
+  - First check: Detects if directory is in a cloud-synced location
+  - Second check: Tests actual directory creation capability (not just file writes)
+  - Provides clear error messages explaining why fallback location is being used
+  - Returns both status and detailed error message for better user feedback
+- **Improved Validation Messaging**: Updated Pre-Flight validation display
+  - Shows specific cloud service name when detected (e.g., "OneDrive", "Google Drive")
+  - Explains potential issues with cloud folders (sync conflicts, access errors)
+  - Displays fallback path location for user awareness
+  - Added visual warning when cloud folder is detected
+- **Reliability Improvements**: Prevents class of errors caused by cloud sync interference
+  - Eliminates timing-dependent access issues during temp folder operations
+  - Ensures consistent behavior regardless of sync state
+  - Provides deterministic fallback path selection
+
+Updated Functions:
+
+- `is_cloud_synced_location()` - New helper to detect cloud sync folders
+- `check_write_permissions()` - Enhanced with cloud detection + directory creation test
+- `validate_all_requirements()` - Updated to handle cloud folder detection results
+- `display_validation_results()` - Shows detailed cloud folder warnings when detected
+
 **Version 2025.11.15.JH**
 
 Calibre Auto-Continue & Failsafe Key Cleanup:
