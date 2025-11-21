@@ -268,7 +268,7 @@ This tool is intended for use with ebooks you have legally purchased. Users are 
 
 ## Version History
 
-**Version 2025.11.20.JH**
+**Version 2025.11.21.JH**
 
 Cloud Folder Detection & Write Permission Enhancement:
 
