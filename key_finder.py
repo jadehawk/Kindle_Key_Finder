@@ -8,7 +8,7 @@ No external dependencies - uses the same methods as the plugin
 """
 
 # Script Version
-SCRIPT_VERSION = "2025.11.20.JH"
+SCRIPT_VERSION = "2025.11.21.JH"
 
 # Unified Configuration File
 CONFIG_FILE = "key_finder_config.json"
@@ -603,6 +603,117 @@ def cleanup_temp_kindle():
             print_warn("You may need to manually delete: " + temp_kindle_dir)
         print()
 
+def force_delete_directory_windows(path, timeout=30):
+    """
+    Force-delete directory using Windows rd command (bypasses file locks)
+    This is more aggressive than shutil.rmtree() and won't hang on OneDrive locks
+    
+    Args:
+        path: Directory path to remove
+        timeout: Maximum time in seconds to wait for deletion (default: 30)
+    
+    Returns:
+        bool: True if successful, False if failed or timed out
+    """
+    try:
+        if not os.path.exists(path):
+            return True  # Already deleted
+        
+        # Use Windows rd command with /s (recursive) and /q (quiet) flags
+        # This forces deletion even with file locks that would block shutil.rmtree()
+        cmd = ['cmd', '/c', 'rd', '/s', '/q', f'"{path}"']
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=timeout,
+            text=True,
+            shell=True  # Required for proper path handling with quotes
+        )
+        
+        # Verify deletion
+        if not os.path.exists(path):
+            return True
+        
+        # If directory still exists, try aggressive recursive deletion of subdirectories first
+        # This handles OneDrive's nested empty folder locking
+        try:
+            for root, dirs, files in os.walk(path, topdown=False):
+                # Delete files first
+                for name in files:
+                    try:
+                        file_path = os.path.join(root, name)
+                        os.chmod(file_path, 0o777)  # Force permissions
+                        os.remove(file_path)
+                    except:
+                        pass
+                
+                # Delete directories
+                for name in dirs:
+                    try:
+                        dir_path = os.path.join(root, name)
+                        os.chmod(dir_path, 0o777)  # Force permissions
+                        os.rmdir(dir_path)
+                    except:
+                        pass
+            
+            # Finally try to remove the root directory
+            os.chmod(path, 0o777)
+            os.rmdir(path)
+            
+            return not os.path.exists(path)
+        except:
+            pass
+        
+        # Last resort: Try rd command one more time after manual cleanup
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            timeout=timeout,
+            text=True,
+            shell=True
+        )
+        
+        return not os.path.exists(path)
+        
+    except subprocess.TimeoutExpired:
+        return False
+    except Exception:
+        return False
+
+def rmtree_with_retry(path, max_retries=5, retry_delay=0.5):
+    """
+    Remove directory tree with retry logic for Windows file locking
+    Falls back to Windows rd command if shutil.rmtree() hangs
+    
+    Windows often holds file handles open briefly after processes complete,
+    causing PermissionError or Access Denied errors. This function retries
+    the deletion with exponential backoff, then uses force-delete on failure.
+    
+    Args:
+        path: Directory path to remove
+        max_retries: Maximum number of retry attempts (default: 5)
+        retry_delay: Initial delay between retries in seconds (default: 0.5)
+    
+    Returns:
+        bool: True if successful, False if all retries failed
+    """
+    # First try: Standard shutil.rmtree with retries (fast path)
+    for attempt in range(max_retries):
+        try:
+            shutil.rmtree(path)
+            return True
+        except (OSError, PermissionError) as e:
+            if attempt < max_retries - 1:
+                # Wait with exponential backoff before retry
+                time.sleep(retry_delay * (2 ** attempt))
+            else:
+                # All shutil retries failed
+                break
+    
+    # Fallback: Use Windows force-delete (handles OneDrive locks)
+    return force_delete_directory_windows(path, timeout=30)
+
 def cleanup_temp_extraction(silent=False, working_dir=None):
     """
     Check for and cleanup any leftover temp_extraction folder
@@ -625,14 +736,53 @@ def cleanup_temp_extraction(silent=False, working_dir=None):
         if not silent:
             print_warn("Found leftover temp_extraction folder from previous run")
             print_step("Cleaning up...")
-        try:
-            shutil.rmtree(temp_extraction_dir)
+        
+        success = rmtree_with_retry(temp_extraction_dir)
+        
+        if success:
             if not silent:
                 print_ok("Cleanup completed successfully")
-        except Exception as e:
+        else:
             if not silent:
-                print_error(f"Failed to cleanup temp_extraction folder: {e}")
+                print_error("Failed to cleanup temp_extraction folder after multiple retries")
                 print_warn("You may need to manually delete: " + temp_extraction_dir)
+        
+        if not silent:
+            print()
+
+def cleanup_temp_staging(silent=False, working_dir=None):
+    """
+    Check for and cleanup any leftover temp_kindle_content staging folder
+    from previous failed runs
+    
+    Args:
+        silent: If True, don't print messages
+        working_dir: Directory to check for staging (respects fallback paths)
+    """
+    if working_dir is None:
+        # Determine working_dir if not provided
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        user_home = os.path.expanduser("~")
+        can_write, _ = check_write_permissions(script_dir)
+        working_dir = script_dir if can_write else os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
+    
+    staging_dir = os.path.join(working_dir, "temp_kindle_content")
+    
+    if os.path.exists(staging_dir):
+        if not silent:
+            print_warn("Found leftover staging folder from previous run")
+            print_step("Cleaning up...")
+        
+        success = rmtree_with_retry(staging_dir)
+        
+        if success:
+            if not silent:
+                print_ok("Cleanup completed successfully")
+        else:
+            if not silent:
+                print_error("Failed to cleanup staging folder after multiple retries")
+                print_warn("You may need to manually delete: " + staging_dir)
+        
         if not silent:
             print()
 
@@ -1125,7 +1275,21 @@ def extract_keys_from_single_book(extractor_path, kindle_dir, book_folder, outpu
         else:
             working_dir = os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
     
+    # Try to use working_dir temp_extraction, but fallback to Windows TEMP if access denied
     temp_dir = os.path.join(working_dir, "temp_extraction")
+    
+    # Test if we can actually create/access this directory
+    try:
+        os.makedirs(temp_dir, exist_ok=True)
+        # Try to write a test file to verify access
+        test_file = os.path.join(temp_dir, ".write_test")
+        with open(test_file, 'w') as f:
+            f.write("test")
+        os.remove(test_file)
+    except (OSError, PermissionError):
+        # Fallback to Windows TEMP directory if AppData is inaccessible
+        import tempfile
+        temp_dir = os.path.join(tempfile.gettempdir(), "Kindle_Key_Finder_Extraction")
     
     try:
         
@@ -1135,14 +1299,31 @@ def extract_keys_from_single_book(extractor_path, kindle_dir, book_folder, outpu
             shutil.copy2(extractor_path, kindle_dir)
         
         # Create temporary directory for this book only
+        # Use robust cleanup that handles Windows file locking
         if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-        os.makedirs(temp_dir, exist_ok=True)
+            success = rmtree_with_retry(temp_dir, max_retries=5, retry_delay=0.5)
+            if not success:
+                return False, None, None, f"Failed to clean temp directory (Windows file lock): Try closing Kindle or other apps accessing these files", asin
+        
+        # Create temp directory
+        try:
+            os.makedirs(temp_dir, exist_ok=True)
+        except Exception as e:
+            return False, None, None, f"Failed to create temp directory: {e}", asin
         
         # Copy single book folder to temp directory
         book_name = os.path.basename(book_folder)
         temp_book = os.path.join(temp_dir, book_name)
-        shutil.copytree(book_folder, temp_book)
+        
+        try:
+            shutil.copytree(book_folder, temp_book)
+        except (OSError, PermissionError) as e:
+            # If copytree fails with access denied, provide detailed error
+            error_details = f"Access denied copying book folder - {str(e)}"
+            if "onedrive" in book_folder.lower():
+                error_details += "\n          OneDrive sync may be blocking file operations"
+                error_details += "\n          Try: Close OneDrive, disable real-time sync, or move books to C:\\Temp"
+            return False, None, None, error_details, asin
         
         # Timer display thread (custom for extraction - reprints full line)
         # START TIMER FIRST - before subprocess creation
@@ -1232,9 +1413,9 @@ def extract_keys_from_single_book(extractor_path, kindle_dir, book_folder, outpu
                     -1,  # Timeout exit code
                     book_info=f"{asin} - {book_title}"
                 )
-            # Cleanup temp directory before returning
+            # Cleanup temp directory before returning (use robust cleanup)
             if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
+                rmtree_with_retry(temp_dir)
             return False, None, None, f"Timeout after 60 seconds", asin
         
         # Wait for stderr thread
@@ -1277,9 +1458,9 @@ def extract_keys_from_single_book(extractor_path, kindle_dir, book_folder, outpu
                 else:
                     error_msg = f"Key extraction failed (exit code {process.returncode})"
             
-            # Cleanup temp directory before returning
+            # Cleanup temp directory before returning (use robust cleanup)
             if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
+                rmtree_with_retry(temp_dir)
             return False, None, None, error_msg, asin
         
         # Parse output for DSN and tokens
@@ -1301,24 +1482,21 @@ def extract_keys_from_single_book(extractor_path, kindle_dir, book_folder, outpu
         
         # Check if key files were generated
         if not os.path.exists(output_key) or not os.path.exists(output_k4i):
-            # Cleanup temp directory before returning
+            # Cleanup temp directory before returning (use robust cleanup)
             if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
+                rmtree_with_retry(temp_dir)
             return False, None, None, "Key files not generated", asin
         
-        # Cleanup temp directory after successful extraction
+        # Cleanup temp directory after successful extraction (use robust cleanup)
         if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
+            rmtree_with_retry(temp_dir)
         
         return True, dsn, tokens, None, asin
         
     except Exception as e:
-        # Cleanup temp directory on exception
+        # Cleanup temp directory on exception (use robust cleanup)
         if os.path.exists(temp_dir):
-            try:
-                shutil.rmtree(temp_dir)
-            except:
-                pass
+            rmtree_with_retry(temp_dir)
         return False, None, None, str(e), asin
 
 def append_keys_to_files(output_key, output_k4i, temp_key, temp_k4i):
@@ -1572,6 +1750,77 @@ def write_extraction_log(extraction_stats, working_dir):
         print_warn(f"Failed to write extraction log file: {e}")
         return None
 
+def bulk_copy_selected_books(book_folders, staging_dir, source_content_dir):
+    """
+    Copy only the books that will be processed (post-history filtering) to staging directory
+    
+    Args:
+        book_folders: List of (asin, book_path, title) tuples to process
+        staging_dir: Target staging directory in AppData
+        source_content_dir: Original content directory (in cloud)
+    
+    Returns:
+        staging_dir path (becomes new content_dir)
+    """
+    # Clean old staging with robust retry logic (handles OneDrive file locks)
+    if os.path.exists(staging_dir):
+        print_step("Removing old staging...")
+        success = rmtree_with_retry(staging_dir, max_retries=10, retry_delay=1.0)
+        
+        if success:
+            print_ok("Old staging removed")
+        else:
+            print_error("Failed to remove old staging after multiple retries")
+            print_warn("OneDrive may be syncing your AppData folder - this is the root cause")
+            print_warn("SOLUTION: Close OneDrive completely, then re-run the script")
+            print()
+            raise Exception("Cannot proceed with dirty staging folder - OneDrive file lock detected")
+        print()
+    
+    os.makedirs(staging_dir, exist_ok=True)
+    
+    print_step(f"Copying {len(book_folders)} book folder(s) to staging...")
+    print()
+    
+    copy_success = 0
+    copy_failed = 0
+    
+    for idx, (asin, book_path, title) in enumerate(book_folders, 1):
+        folder_name = os.path.basename(book_path)
+        staging_book_path = os.path.join(staging_dir, folder_name)
+        
+        print(f"[{idx}/{len(book_folders)}] {folder_name}...", end='', flush=True)
+        
+        try:
+            shutil.copytree(book_path, staging_book_path)
+            print(" ✓")
+            copy_success += 1
+        except Exception as e:
+            print(f" ✗ Failed: {e}")
+            copy_failed += 1
+    
+    print()
+    print_ok(f"Copied {copy_success} book folder(s) successfully")
+    
+    if copy_failed > 0:
+        print_warn(f"Failed to copy {copy_failed} book folder(s)")
+    
+    print()
+    
+    # Update book_folders to point to staging paths (modify list in-place)
+    for i in range(len(book_folders)):
+        asin, book_path, title = book_folders[i]
+        folder_name = os.path.basename(book_path)
+        book_folders[i] = (asin, os.path.join(staging_dir, folder_name), title)
+    
+    # Cooldown for cloud sync
+    print_step("Waiting for cloud sync to stabilize (10 seconds)...")
+    time.sleep(10)
+    print_ok("Ready for processing!")
+    print()
+    
+    return staging_dir
+
 def extract_keys_using_extractor(extractor_path, content_dir, output_key, output_k4i, working_dir=None):
     """
     Extract keys using the KFXKeyExtractor28.exe with per-book processing
@@ -1685,6 +1934,73 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
             print()
             # Return success (not failure) since this is an expected scenario
             return True, None, None, extraction_stats
+        
+        # NEW: Check if content_dir (books location) is in a cloud-synced location
+        is_cloud, cloud_service = is_cloud_synced_location(content_dir)
+        
+        if is_cloud:
+            print()
+            print_warn(f"Books detected in cloud location: {cloud_service}")
+            print(f"  Book location: {content_dir}")
+            print()
+            print_colored("═" * 70, 'yellow')
+            print_warn("CLOUD SYNC DETECTION - STAGING REQUIRED")
+            print_colored("═" * 70, 'yellow')
+            print()
+            print("Cloud folders can cause 'Access Denied' errors during book processing.")
+            print("To ensure reliable extraction, books will be staged to local directory.")
+            print()
+            print("This will:")
+            print("  1. Copy books to AppData staging folder")
+            print("  2. Wait 10 seconds for cloud sync to stabilize")
+            print("  3. Process books from local staging (no cloud conflicts)")
+            print("  4. Clean up staging folder after extraction")
+            print()
+            
+            # Create staging directory in working_dir
+            staging_dir = os.path.join(working_dir, "temp_kindle_content")
+            
+            # Bulk copy only the books that will be processed (already filtered by history)
+            content_dir = bulk_copy_selected_books(book_folders, staging_dir, content_dir)
+            
+            print_ok("Books staged successfully!")
+            print_ok(f"Processing from: {staging_dir}")
+            print()
+            
+            # IMPORTANT: Display warning about potential WinError 5 (Access Denied)
+            print()
+            print_colored("╔" + "═" * 68 + "╗", 'red')
+            print_colored("║" + " " * 68 + "║", 'red')
+            print_colored("║" + "⚠  WARNING: CLOUD SYNC ACCESS ISSUES - READ CAREFULLY".center(68) + "║", 'red')
+            print_colored("║" + " " * 68 + "║", 'red')
+            print_colored("╚" + "═" * 68 + "╝", 'red')
+            print()
+            print("The script will now ATTEMPT to work around cloud sync access issues.")
+            print_warn("However, this workaround is HIT or MISS and may still fail!")
+            print()
+            print_colored("IF THE SCRIPT FAILS WITH 'ACCESS DENIED' OR 'WinError 5':", 'yellow')
+            print()
+            print("TRY:")
+            print("   1. Pausing or Closing your Cloud Service application")
+            print('   2. try running script again')
+            print()
+            print("RECOMMENDED SOLUTION:")
+            print("  1. Open Kindle for PC")
+            print("  2. Go to Tools → Options → Content")
+            print("  3. Change the download location to a non-cloud folder")
+            print(f"     Example: C:\\Temp\\Kindle Books (NOT {cloud_service})")
+            print("  4. Re-download your books to the new location")
+            print("  5. Run this script again pointing to the new location")
+            print()
+            print("ALTERNATIVE (TEMPORARY FIX):")
+            print("  1. Copy/Move the book folders that need DeDRM to a local folder")
+            print(f"     Example: Move from {content_dir}")
+            print("              to C:\\Temp\\Kindle Books")
+            print("  2. Run this script pointing to the new local location")
+            print()
+            print_warn("Cloud sync (OneDrive, Google Drive, etc.) actively blocks file access!")
+            print("This is especially common with OneDrive's 'Files On-Demand' feature.")
+            print()
         
         # Process each book individually
         print_step(f"Extracting keys from {len(book_folders)} book(s)...")
@@ -4020,7 +4336,7 @@ def write_import_log(library_path, results, azw_files, working_dir):
         print_warn(f"Failed to write log file: {e}")
         return None
 
-def import_all_azw_files(content_dir, library_path, use_duplicates=False, per_book_timeout=120, exclude_asins=None):
+def import_all_azw_files(content_dir, library_path, use_duplicates=False, per_book_timeout=120, exclude_asins=None, working_dir=None):
     """
     Import all *.azw files one at a time with individual timeouts
     Optionally exclude ASINs that failed key extraction
@@ -4055,11 +4371,12 @@ def import_all_azw_files(content_dir, library_path, use_duplicates=False, per_bo
     config = load_config()
     enable_raw_logs = config.get('enable_raw_logs', False) if config else False
     
-    # Determine working_dir for raw logs
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    user_home = os.path.expanduser("~")
-    can_write, _ = check_write_permissions(script_dir)
-    working_dir = script_dir if can_write else os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
+    # Use provided working_dir or determine it
+    if working_dir is None:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        user_home = os.path.expanduser("~")
+        can_write, _ = check_write_permissions(script_dir)
+        working_dir = script_dir if can_write else os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
     
     # Initialize raw log path if enabled
     raw_log_path = None
@@ -5235,7 +5552,7 @@ def convert_book_alternate_method(source_path, epub_path, library_path, raw_log_
         error_type = {'is_kfx_error': False, 'is_timeout': False, 'is_drm': False, 'is_pdf': False}
         return False, str(e), error_type
 
-def process_book_conversions(library_path, book_ids, calibre_config=None):
+def process_book_conversions(library_path, book_ids, calibre_config=None, working_dir=None):
     """
     Main orchestrator for Phase 4: KFX to EPUB conversion
     Returns: dict with conversion statistics
@@ -5340,11 +5657,12 @@ def process_book_conversions(library_path, book_ids, calibre_config=None):
         is_mobi = source_filename.lower().endswith('.mobi')
         is_azw = source_filename.lower().endswith('.azw')
         
-        # Determine working_dir for temp files
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        user_home = os.path.expanduser("~")
-        can_write, _ = check_write_permissions(script_dir)
-        working_dir = script_dir if can_write else os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
+        # Use passed working_dir parameter or determine it if not provided
+        if working_dir is None:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            user_home = os.path.expanduser("~")
+            can_write, _ = check_write_permissions(script_dir)
+            working_dir = script_dir if can_write else os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
         
         # Initialize raw log path if enabled
         enable_raw_logs = config.get('enable_raw_logs', False) if config else False
@@ -5458,10 +5776,12 @@ def process_book_conversions(library_path, book_ids, calibre_config=None):
     
     # Write log file if there were any failures or skipped books
     if stats['failed'] > 0 or stats.get('skipped_kfx_zip', 0) > 0 or stats.get('failed_merges'):
-        user_home = os.path.expanduser("~")
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        can_write, _ = check_write_permissions(script_dir)
-        working_dir = script_dir if can_write else os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
+        # Use passed working_dir parameter or determine it if not provided
+        if working_dir is None:
+            user_home = os.path.expanduser("~")
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            can_write, _ = check_write_permissions(script_dir)
+            working_dir = script_dir if can_write else os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
         log_file = write_conversion_log(library_path, stats, book_info, working_dir)
         if log_file:
             print()
@@ -5486,8 +5806,8 @@ def process_book_conversions(library_path, book_ids, calibre_config=None):
     
     display_phase_summary(4, "KFX to EPUB Conversion", summary_points, pause_seconds=5)
     
-    # Cleanup temp_extraction folder after all conversions complete (will auto-detect working_dir)
-    cleanup_temp_extraction(silent=True)
+    # Cleanup temp_extraction folder after all conversions complete
+    cleanup_temp_extraction(silent=True, working_dir=working_dir)
     
     return stats
 
@@ -5652,7 +5972,7 @@ def process_timeout_retries(library_path, timeout_books, book_info, calibre_conf
     
     return retry_stats
 
-def attempt_calibre_import(content_dir, script_dir, calibre_already_confirmed=False, extraction_stats=None):
+def attempt_calibre_import(content_dir, script_dir, calibre_already_confirmed=False, extraction_stats=None, working_dir=None):
     """
     Main entry point for Calibre auto-import functionality
     Simplified approach using direct library path
@@ -5661,6 +5981,7 @@ def attempt_calibre_import(content_dir, script_dir, calibre_already_confirmed=Fa
     Args:
         calibre_already_confirmed: If True, skip asking user to close Calibre (already asked in pre-flight)
         extraction_stats: Dict with extraction statistics including failed_books list
+        working_dir: Working directory (respects fallback paths)
     """
     # Load config to check clear screen setting
     config = load_config()
@@ -5733,7 +6054,7 @@ def attempt_calibre_import(content_dir, script_dir, calibre_already_confirmed=Fa
         # Import all ebooks (use duplicates flag if cleanup was skipped)
         # Pass exclude_asins to skip books that failed key extraction
         # Returns dict with: total, success, failed, timed_out, book_ids, failed_books, timed_out_books
-        results = import_all_azw_files(content_dir, config['library_path'], use_duplicates=cleanup_skipped, exclude_asins=exclude_asins)
+        results = import_all_azw_files(content_dir, config['library_path'], use_duplicates=cleanup_skipped, exclude_asins=exclude_asins, working_dir=working_dir)
         
         # Extract stats from results dict
         imported_count = results['success']
@@ -5830,6 +6151,9 @@ def main():
     user_home = os.path.expanduser("~")
     extractor = os.path.join(fixed_dir, "KFXKeyExtractor28.exe")
     
+    # Initialize working_dir as None - will be set during validation
+    working_dir = None
+    
     # Define initial paths (will be updated after validation if using fallback)
     keys_dir = os.path.join(fixed_dir, "Keys")
     output_key = os.path.join(keys_dir, "kindlekey.txt")
@@ -5860,10 +6184,12 @@ def main():
         # Cleanup any leftover temp_extraction folder
         cleanup_temp_extraction()
         
+        # Cleanup any leftover staging folder
+        cleanup_temp_staging()
+        
         # =====================================================================
         # PRE-FLIGHT: VALIDATE ALL REQUIREMENTS
         # =====================================================================
-        
         print_step("Validating system requirements...")
         print()
         
@@ -6024,7 +6350,7 @@ def main():
         print("--------------------------------------------------")
         print()
         
-        result = extract_keys_using_extractor(extractor, content_dir, output_key, output_k4i)
+        result = extract_keys_using_extractor(extractor, content_dir, output_key, output_k4i, working_dir=working_dir)
         
         # Check if user quit during extraction
         if result == 0:
@@ -6240,7 +6566,7 @@ def main():
         converted_count = 0
         import_results = None
         conversion_stats = None
-        result = attempt_calibre_import(content_dir, script_dir, calibre_already_confirmed=calibre_ready, extraction_stats=extraction_stats)
+        result = attempt_calibre_import(content_dir, script_dir, calibre_already_confirmed=calibre_ready, extraction_stats=extraction_stats, working_dir=working_dir)
         
         # Handle result - could be 0 (skipped), or tuple (imported_count, book_ids, config, results)
         if result == 0:
@@ -6256,7 +6582,7 @@ def main():
             
             # === PHASE 4: KFX TO EPUB CONVERSION ===
             if config.get('convert_to_epub', False) and book_ids:
-                conversion_stats = process_book_conversions(config['library_path'], book_ids, config)
+                conversion_stats = process_book_conversions(config['library_path'], book_ids, config, working_dir=working_dir)
                 converted_count = conversion_stats['merged']
                 
                 # === PHASE 4B: RETRY FAILED CONVERSIONS (INCLUDING TIMEOUTS) ===
@@ -6357,6 +6683,14 @@ def main():
             print(f"  + Imported {imported_count} ebook(s) to Calibre")
         if converted_count > 0:
             print(f"  + Converted and merged {converted_count} ebook(s) to EPUB format")
+
+        # Cleanup staging directory after all phases complete (if it was created)
+        staging_dir = os.path.join(working_dir, "temp_kindle_content")
+        if os.path.exists(staging_dir):
+            # Use robust cleanup that handles OneDrive locks
+            print()
+            print_step("Cleaning Staging Directory/Files")
+            rmtree_with_retry(staging_dir)
         
         # Show extraction issues if any
         if extraction_stats and (extraction_stats.get('skipped', 0) > 0 or extraction_stats.get('failed', 0) > 0):
@@ -6495,6 +6829,20 @@ def main():
         print_error(f"Script failed: {str(e)}")
         import traceback
         print_error(f"Traceback: {traceback.format_exc()}")
+        
+        # Determine working_dir for cleanup (in case error occurred before validation)
+        if working_dir is None:
+            # working_dir not set yet - determine it now
+            can_write, _ = check_write_permissions(script_dir)
+            cleanup_working_dir = script_dir if can_write else os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder")
+        else:
+            cleanup_working_dir = working_dir
+        
+        # Cleanup staging directory on error (if it was created)
+        staging_dir = os.path.join(cleanup_working_dir, "temp_kindle_content")
+        if os.path.exists(staging_dir):
+            # Use robust cleanup that handles OneDrive locks
+            rmtree_with_retry(staging_dir)
         
         # Restore backup if it exists
         if os.path.exists(backup_json) and os.path.exists(dedrm_json):
