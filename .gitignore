@@ -1,53 +1,9 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
+*
 
-# Virtual Environment
-venv/
-ENV/
-env/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# Project-specific
-Keys/
-Logs/
-backups/
-temp_extraction/
-history.txt
-key_finder_config.json
-_LOCATION_INFO.txt
-Kindle_Key_Finder.zip
-
-# OS
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# Temporary files
-*.tmp
-*.bak
-*.log
+!.gitignore
+!DeDRM_plugin.zip
+!key_finder.py
+!KFXKeyExtractor28.py
+!Obok_plugin.zip
+!README.md
+!Run Key_finder.bat
