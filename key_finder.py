@@ -8,7 +8,7 @@ No external dependencies - uses the same methods as the plugin
 """
 
 # Script Version
-SCRIPT_VERSION = "2025.11.21.JH"
+SCRIPT_VERSION = "2025.11.22.JH"
 
 # Unified Configuration File
 CONFIG_FILE = "key_finder_config.json"
@@ -472,10 +472,58 @@ def display_progress_timer(message, timeout_seconds, timer_stopped_event):
               end='', flush=True)
         time.sleep(1)
 
-def get_kindle_content_path(default_path):
+def validate_kindle_path(path: str) -> dict:
+    """
+    Validate Kindle content path for books and database
+    
+    Scans the directory for:
+    - *.azw files (Kindle book format)
+    - book_asset.db (Kindle for PC database)
+    
+    Args:
+        path: Directory path to validate
+    
+    Returns:
+        dict: {
+            "books_found": int,      # Count of *.azw files
+            "db_found": bool         # book_asset.db present
+        }
+    """
+    result = {
+        "books_found": 0,
+        "db_found": False
+    }
+    
+    try:
+        if not os.path.exists(path):
+            return result
+        
+        # Search recursively for both books and database
+        for root, dirs, files in os.walk(path):
+            for file in files:
+                # Check for .azw files
+                if file.lower().endswith('.azw'):
+                    result["books_found"] += 1
+                
+                # Check for book_asset.db
+                if file.lower() == "book_asset.db":
+                    result["db_found"] = True
+        
+        return result
+        
+    except Exception as e:
+        print_warn(f"Error validating path: {e}")
+        return result
+
+def get_kindle_content_path(default_path, use_timer=False):
     """
     Prompt user to confirm or modify the Kindle content directory path
-    Handles Windows-specific path scenarios with 5-second auto-proceed timer
+    Validates path immediately after selection to prevent Phase 1 failures
+    Handles Windows-specific path scenarios with optional auto-proceed timer
+    
+    Args:
+        default_path: Default Kindle content directory path
+        use_timer: If True, auto-proceed after 5 seconds. If False, wait for user input.
     """
     import threading
     import msvcrt
@@ -484,17 +532,23 @@ def get_kindle_content_path(default_path):
     print("--------------------------------------------------")
     print(f"Default path: {default_path}")
     print()
-    print("Press Enter to accept default immediately, or start typing for custom path")
-    print("(Auto-proceeding with default in 5 seconds if no input...)")
+    
+    if use_timer:
+        print_warn("Press Enter to accept default immediately, or ANY KEY to Stop Timer")
+        print("(Auto-proceeding with default in 5 seconds if no input...)")
+    else:
+        print("Press Enter to accept default, or start typing your NEW custom path below:")
     print()
     
     # Shared state for timer and input
     timer_cancelled = threading.Event()
     user_input_started = threading.Event()
-    countdown_active = True
+    countdown_active = use_timer  # Only activate countdown if timer is enabled
     
     def countdown_timer():
         nonlocal countdown_active
+        if not use_timer:
+            return
         for i in range(5, 0, -1):
             if timer_cancelled.is_set() or user_input_started.is_set():
                 countdown_active = False
@@ -507,23 +561,25 @@ def get_kindle_content_path(default_path):
             print_ok("Auto-proceeding with default path")
             timer_cancelled.set()
     
-    # Start countdown timer
-    timer_thread = threading.Thread(target=countdown_timer, daemon=True)
-    timer_thread.start()
+    # Start countdown timer only if enabled
+    if use_timer:
+        timer_thread = threading.Thread(target=countdown_timer, daemon=True)
+        timer_thread.start()
     
     # Wait for user input or timer expiry
     user_input = ""
     input_buffer = []
     
-    while countdown_active or user_input_started.is_set():
+    while countdown_active or user_input_started.is_set() or not use_timer:
         if msvcrt.kbhit():
             char = msvcrt.getwche()
             
             if not user_input_started.is_set():
-                # First keypress - cancel timer
+                # First keypress - cancel timer if active
                 user_input_started.set()
-                timer_cancelled.set()
-                print("\r" + " " * 50 + "\r", end='', flush=True)  # Clear countdown
+                if use_timer:
+                    timer_cancelled.set()
+                    print("\r" + " " * 50 + "\r", end='', flush=True)  # Clear countdown
                 
                 # Check if it's Enter key
                 if char == '\r':
@@ -547,8 +603,9 @@ def get_kindle_content_path(default_path):
                 else:
                     input_buffer.append(char)
         elif not countdown_active and not user_input_started.is_set():
-            # Timer expired, no input
-            break
+            # Timer expired (if was enabled), no input
+            if use_timer:
+                break
         else:
             time.sleep(0.05)
     
@@ -569,11 +626,7 @@ def get_kindle_content_path(default_path):
         content_path = os.path.normpath(content_path)
     
     # Validate path exists
-    if os.path.exists(content_path):
-        print_ok(f"Using path: {content_path}")
-        print()
-        return content_path
-    else:
+    if not os.path.exists(content_path):
         print_error(f"Path does not exist: {content_path}")
         print()
         # Ask again or exit
@@ -582,6 +635,91 @@ def get_kindle_content_path(default_path):
             return get_kindle_content_path(default_path)
         else:
             raise FileNotFoundError(f"Kindle content directory not found: {content_path}")
+
+    os.system('cls')
+    # Path exists - now validate for books and database
+    print_step("Validating Kindle content path...")
+    validation_result = validate_kindle_path(content_path)
+    
+    books_found = validation_result["books_found"]
+    db_found = validation_result["db_found"]
+    
+    # Display validation results
+    print()
+    print("=" * 70)
+    print_step("Path Validation Results:")
+    print("=" * 70)
+    print()
+    
+    if books_found > 0 and db_found:
+        # Scenario A: Both books and database found (ideal)
+        print_ok(f"✓ Found {books_found} book(s) (*.azw files)")
+        print_ok(f"✓ Found Kindle database (book_asset.db)")
+        print()
+        print_colored("  This appears to be a valid Kindle for PC download folder.", 'green')
+    elif books_found > 0 and not db_found:
+        # Scenario B: Books found but no database (custom DeDRM folder)
+        print_ok(f"✓ Found {books_found} book(s) (*.azw files)")
+        print_warn(f"✗ Kindle database (book_asset.db) NOT found")
+        print()
+        print_colored("  This appears to be a custom folder for DeDRM purposes.", 'yellow')
+        print_colored("  (Books present but not the standard Kindle for PC folder)", 'yellow')
+    elif books_found == 0 and db_found:
+        # Database found but no books
+        print_warn(f"✗ No books (*.azw files) found")
+        print_ok(f"✓ Found Kindle database (book_asset.db)")
+        print()
+        print_colored("  This is a Kindle for PC folder but contains no downloaded books.", 'yellow')
+    else:
+        # Neither books nor database found
+        print_error(f"✗ No books (*.azw files) found")
+        print_error(f"✗ Kindle database (book_asset.db) NOT found")
+        print()
+        print_colored("  This folder appears empty or is not a Kindle content folder.", 'red')
+    
+    print()
+    print_colored("─" * 70, 'cyan')
+    print_warn("IMPORTANT: Phase 1 (Key Extraction) Requirements")
+    print_colored("─" * 70, 'cyan')
+    print()
+    
+    if books_found == 0:
+        print_error("⚠  Choosing this path will cause Phase 1 to fail with:")
+        print_error("   'No books found in content directory!'")
+        print()
+        print("   You MUST download your books into this folder for the script to work.")
+        print("   Or Re-enter and Choose a different path")
+        print_warn(f"   Path {default_path}")
+        print()
+    else:
+        print_ok(f"✓ Path contains {books_found} book(s) - Phase 1 should proceed normally")
+        print()
+    
+    # User confirmation
+    print("Options:")
+    print("  [C] Confirm - Use this path and continue")
+    print("  [R] Re-enter - Choose a different path")
+    print("  [Q] Quit - Exit script")
+    print()
+    
+    while True:
+        choice = input("Your choice (C/R/Q): ").strip().upper()
+        if choice == 'C':
+            print()
+            print_ok(f"Using path: {content_path}")
+            print()
+            return content_path
+        elif choice == 'R':
+            print()
+            print_step("Re-entering path...")
+            print()
+            return get_kindle_content_path(default_path)
+        elif choice == 'Q':
+            print()
+            print_warn("Script cancelled by user")
+            sys.exit(0)
+        else:
+            print_error("Invalid choice. Please enter C, R, or Q.")
 
 def cleanup_temp_kindle():
     """
@@ -1212,7 +1350,7 @@ def prompt_history_action(total_books, previously_processed_count):
 
 def scan_kindle_content_directory(content_dir):
     """
-    Scan Kindle Content directory for individual book folders
+    Scan Kindle Content directory for individual book folders (recursively)
     Returns: list of tuples [(asin, book_folder_path, book_title), ...]
     """
     book_folders = []
@@ -1222,33 +1360,25 @@ def scan_kindle_content_directory(content_dir):
             print_error(f"Content directory does not exist: {content_dir}")
             return []
         
-        # Scan for book folders (typically named like "B00N17VVZC_EBOK")
-        for item in os.listdir(content_dir):
-            item_path = os.path.join(content_dir, item)
+        # Scan recursively for folders containing book files
+        for root, dirs, files in os.walk(content_dir):
+            # Check if this directory contains any book files
+            book_files = [f for f in files if f.lower().endswith(('.azw', '.kfx', '.kfx-zip', '.azw3'))]
             
-            # Only process directories
-            if not os.path.isdir(item_path):
-                continue
-            
-            # Extract ASIN from folder name (e.g., "B00N17VVZC_EBOK" -> "B00N17VVZC")
-            # ASIN is typically the first part before underscore
-            asin = item.split('_')[0] if '_' in item else item
-            
-            # Try to get book title from folder metadata or use ASIN as fallback
-            book_title = asin  # Default to ASIN
-            
-            # Check if folder contains book files (.azw, .kfx, etc.)
-            has_book_files = False
-            try:
-                for file in os.listdir(item_path):
-                    if file.lower().endswith(('.azw', '.kfx', '.kfx-zip', '.azw3')):
-                        has_book_files = True
-                        break
-            except Exception:
-                continue
-            
-            if has_book_files:
-                book_folders.append((asin, item_path, book_title))
+            if book_files:
+                # This folder contains books - extract ASIN from folder name or first book file
+                folder_name = os.path.basename(root)
+                
+                # Try to extract ASIN from folder name first (e.g., "B00N17VVZC_EBOK")
+                if '_' in folder_name:
+                    asin = folder_name.split('_')[0]
+                else:
+                    # Fallback: Extract from first book filename (e.g., "B00N17VVZC_EBOK.azw")
+                    first_book = book_files[0]
+                    asin = os.path.splitext(first_book)[0].split('_')[0]
+                
+                book_title = asin  # Default to ASIN
+                book_folders.append((asin, root, book_title))
         
         return book_folders
         
@@ -1824,7 +1954,7 @@ def bulk_copy_selected_books(book_folders, staging_dir, source_content_dir):
 def extract_keys_using_extractor(extractor_path, content_dir, output_key, output_k4i, working_dir=None):
     """
     Extract keys using the KFXKeyExtractor28.exe with per-book processing
-    Returns: (success: bool, dsn: str, tokens: str, extraction_stats: dict)
+    Returns: (success: bool, dsn: str, tokens: str, extraction_stats: dict, updated_content_dir: str)
     """
     # Find kindle.exe location
     kindle_dir, needs_temp_copy = find_kindle_exe()
@@ -1883,17 +2013,69 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
             print("--------------------------------------------------")
             print()
             print_error("No books found in content directory!")
+            print(f"  Selected path: {content_dir}")
             print()
             
-            # Pause for 5 seconds before showing final page
-            print_step("Pausing for 5 seconds before exit...")
-            time.sleep(5)
+            # Offer recovery workflow instead of exiting
+            print_warn("The selected path does not contain any books.")
+            print("This could happen if:")
+            print("  - You haven't downloaded books to this location")
+            print("  - You selected the wrong folder")
+            print("  - Books are in a different location")
+            print()
             
-            # Show final credits page
-            display_credits_and_links()
+            print("Options:")
+            print("  [R] Retry - Choose a different Kindle content path")
+            print("  [Q] Quit - Exit script")
+            print()
             
-            # Exit script
-            sys.exit(1)
+            while True:
+                choice = input("Your choice (R/Q): ").strip().upper()
+                if choice == 'R':
+                    print()
+                    print_step("Re-selecting Kindle content path...")
+                    print()
+                    
+                    # Get new path from user
+                    user_home = os.path.expanduser("~")
+                    default_content = os.path.join(user_home, "Documents", "My Kindle Content")
+                    new_content_dir = get_kindle_content_path(default_content, use_timer=False)
+                    
+                    # Update config file with new path
+                    current_config = load_config()
+                    if current_config:
+                        current_config['kindle_content_path'] = new_content_dir
+                        save_config(current_config)
+                        print_ok("Configuration updated with new path")
+                        print()
+                    
+                    # Update content_dir for retry
+                    content_dir = new_content_dir
+                    
+                    # Retry scanning with new path
+                    print_step("Rescanning for book folders...")
+                    book_folders = scan_kindle_content_directory(content_dir)
+                    
+                    if not book_folders:
+                        print_warn("Still no book folders found in new directory")
+                        print()
+                        print("Would you like to try a different path?")
+                        continue  # Loop back to offer choices again
+                    else:
+                        # Success! Books found with new path
+                        print_ok(f"Found {len(book_folders)} book folder(s) with new path")
+                        print()
+                        break  # Exit the retry loop and continue with extraction
+                        
+                elif choice == 'Q':
+                    print()
+                    print_warn("Script cancelled by user")
+                    print()
+                    # Show final credits page before exit
+                    display_credits_and_links()
+                    sys.exit(0)
+                else:
+                    print_error("Invalid choice. Please enter R or Q.")
         
         extraction_stats['total'] = len(book_folders)
         print_ok(f"Found {len(book_folders)} book folder(s)")
@@ -2016,38 +2198,41 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
         for idx, (asin, book_folder, book_title) in enumerate(book_folders, 1):
             # Get folder name (e.g., "B00JBVUJM8_EBOK")
             folder_name = os.path.basename(book_folder)
-            
+
+            # Initialize fetched_title (defaults to ASIN if not fetched or disabled)
+            fetched_title = asin
+
             # Build book prefix for timer display based on fetch_titles configuration
             if fetch_titles:
                 fetched_title = fetch_book_title_from_asin(asin)
                 book_prefix = f"[{idx}/{len(book_folders)}] {folder_name} - {fetched_title}..."
             else:
                 book_prefix = f"[{idx}/{len(book_folders)}] {folder_name}..."
-            
+
             # Extract keys from single book (pass book_prefix for timer display)
             success, book_dsn, book_tokens, error_msg, _ = extract_keys_from_single_book(
-                extractor_path, kindle_dir, book_folder, temp_key, temp_k4i, asin, book_title, 
+                extractor_path, kindle_dir, book_folder, temp_key, temp_k4i, asin, book_title,
                 working_dir=working_dir, raw_log_path=raw_log_path, book_prefix=book_prefix
             )
-            
+
             if success:
                 print_colored(" [OK] ✓", 'green')
                 extraction_stats['success'] += 1
-                
+
                 # Store DSN and tokens from first successful extraction
                 if not dsn and book_dsn:
                     dsn = book_dsn
                 if not tokens and book_tokens:
                     tokens = book_tokens
-                
+
                 # Append keys to main files
                 append_success, append_error = append_keys_to_files(output_key, output_k4i, temp_key, temp_k4i)
                 if not append_success:
                     print_warn(f" (Warning: Failed to append keys - {append_error})")
-                
+
                 # Update history with successfully processed book
                 append_to_history(working_dir, asin)
-                
+
                 # Cleanup temp files
                 try:
                     if os.path.exists(temp_key):
@@ -2059,10 +2244,12 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
             else:
                 print_colored(" [ERROR] ✗ FAILED", 'red')
                 extraction_stats['failed'] += 1
-                
-                # Fetch book title from ASIN for better error reporting
-                fetched_title = fetch_book_title_from_asin(asin)
-                extraction_stats['failed_books'].append((asin, fetched_title, error_msg if error_msg else "Unknown error"))
+
+                # Use the title that was fetched for progress display (or fallback to ASIN)
+                # This prevents calling fetch_book_title_from_asin() again for failed books,
+                # which would launch a browser window unnecessarily
+                failed_book_title = fetched_title if fetched_title != asin else asin
+                extraction_stats['failed_books'].append((asin, failed_book_title, error_msg if error_msg else "Unknown error"))
         
         print()
         
@@ -2089,11 +2276,13 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
         # Check if extraction was successful (at least one book succeeded)
         overall_success = extraction_stats['success'] > 0
         
-        return overall_success, dsn, tokens, extraction_stats
+        # Return updated content_dir so caller can use the correct path
+        return overall_success, dsn, tokens, extraction_stats, content_dir
         
     except Exception as e:
         print_error(f"Extractor method failed: {e}")
-        return False, None, None, extraction_stats
+        # Return original content_dir even on error
+        return False, None, None, extraction_stats, content_dir
         
     finally:
         # Always cleanup temporary copy if we created one
@@ -3098,34 +3287,15 @@ def configure_pre_flight_wizard(user_home, TOTAL_STEPS):
         'last_updated': datetime.now().isoformat()
     }
     
-    # 1. Kindle Content Path
+    # 1. Kindle Content Path - Use get_kindle_content_path() for validation
     print_step(f"[1/{TOTAL_STEPS}] Kindle Content Directory")
     print("--------------------------------------------------")
     default_content = os.path.join(user_home, "Documents", "My Kindle Content")
-    print(f"Default: {default_content}")
     print()
     
-    while True:
-        choice = input("Use default path? (Y/N) [Y]: ").strip().upper()
-        if choice == '':
-            choice = 'Y'  # Default to Yes
-        if choice == 'Y':
-            config['kindle_content_path'] = default_content
-            print()
-            print_ok(f"✓ Using: {default_content}")
-            break
-        elif choice == 'N':
-            custom_path = input("Enter custom path: ").strip().strip('"').strip("'")
-            custom_path = os.path.normpath(os.path.expandvars(custom_path))
-            if os.path.exists(custom_path):
-                config['kindle_content_path'] = custom_path
-                print()
-                print_ok(f"✓ Using: {custom_path}")
-                break
-            else:
-                print_error("Path does not exist. Try again.")
-        else:
-            print_error("Please enter Y or N")
+    # Use get_kindle_content_path() which includes validation workflow
+    # Disable timer in wizard - user should make deliberate choice during first-time config
+    config['kindle_content_path'] = get_kindle_content_path(default_content, use_timer=False)
     
     print()
     
@@ -3366,9 +3536,9 @@ def configure_pre_flight_wizard(user_home, TOTAL_STEPS):
     print()
     
     while True:
-        choice = input("Enable raw debug logs? (Y/N) [N]: ").strip().upper()
+        choice = input("Enable raw debug logs? (Y/N) [Y]: ").strip().upper()
         if choice == '':
-            choice = 'N'  # Default to No
+            choice = 'Y'  # Default to Yes
         if choice in ['Y', 'N']:
             config['enable_raw_logs'] = (choice == 'Y')  # type: ignore[assignment]
             print()
@@ -6356,7 +6526,7 @@ def main():
         if result == 0:
             return 0
         
-        success, dsn, tokens, extraction_stats = result
+        success, dsn, tokens, extraction_stats, content_dir = result
         
         print("--------------------------------------------------")
         print()
