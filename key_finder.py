@@ -8,7 +8,7 @@ No external dependencies - uses the same methods as the plugin
 """
 
 # Script Version
-SCRIPT_VERSION = "2025.11.22.JH"
+SCRIPT_VERSION = "2025.12.22.JH"
 
 # Unified Configuration File
 CONFIG_FILE = "key_finder_config.json"
@@ -2314,18 +2314,67 @@ def create_kindle_key_from_k4i(k4i_path, dsn=None, tokens=None):
         print_error(f"Failed to process k4i file: {e}")
         return None
 
-def create_dedrm_config(kindle_key, kindlekey_txt_path, reference_json_path=None):
+def create_dedrm_config(kindle_key, kindlekey_txt_path, existing_dedrm_json_path=None, reference_json_path=None):
     """
-    Create the dedrm.json configuration exactly like the plugin does
+    Create or update the dedrm.json configuration
+    If existing dedrm.json exists, merge new keys into it (append to arrays, avoid duplicates)
+    Otherwise create new structure matching plugin's default
     """
     
+    # Priority 1: Load existing dedrm.json and merge (preserves all existing keys)
+    if existing_dedrm_json_path and os.path.exists(existing_dedrm_json_path):
+        print_step("Loading existing dedrm.json to append new keys...")
+        try:
+            with open(existing_dedrm_json_path, 'r') as f:
+                dedrm_config = json.load(f)
+            
+            # Ensure kindlekeys dict exists
+            if "kindlekeys" not in dedrm_config:
+                dedrm_config["kindlekeys"] = {}
+            
+            # Check if "kindlekey" entry exists - if so, merge secrets into it
+            if "kindlekey" in dedrm_config["kindlekeys"]:
+                print_step("Merging new secrets into existing kindlekey entry...")
+                existing_key = dedrm_config["kindlekeys"]["kindlekey"]
+                
+                # Merge secrets arrays (avoid duplicates)
+                for secret_key in ['kindle.account.secrets', 'kindle.account.new_secrets', 'kindle.account.clear_old_secrets']:
+                    if secret_key in kindle_key:
+                        if secret_key not in existing_key:
+                            existing_key[secret_key] = []
+                        for item in kindle_key[secret_key]:
+                            if item not in existing_key[secret_key]:
+                                existing_key[secret_key].append(item)
+                                print_ok(f"  Appended new {secret_key.split('.')[-1]}: {item[:20]}...")
+                
+                # Update DSN if present in new key
+                if kindle_key.get('DSN') and kindle_key['DSN']:
+                    existing_key['DSN'] = kindle_key['DSN']
+                
+                # Update tokens if present in new key
+                if kindle_key.get('kindle.account.tokens') and kindle_key['kindle.account.tokens']:
+                    existing_key['kindle.account.tokens'] = kindle_key['kindle.account.tokens']
+            else:
+                # No existing kindlekey entry - add the new one
+                print_step("Adding new kindlekey entry to existing config...")
+                dedrm_config["kindlekeys"]["kindlekey"] = kindle_key
+            
+            # Update the extra key file path
+            dedrm_config["kindleextrakeyfile"] = kindlekey_txt_path
+            
+            return dedrm_config
+            
+        except Exception as e:
+            print_warn(f"Failed to load existing dedrm.json: {e}")
+            print_step("Creating new configuration instead...")
+    
+    # Priority 2: Use reference file as template (legacy support)
     if reference_json_path and os.path.exists(reference_json_path):
-        # Use reference file as template
         print_step("Using reference file as template...")
         with open(reference_json_path, 'r') as f:
             dedrm_config = json.load(f)
     else:
-        # Create new structure matching plugin's default
+        # Priority 3: Create new structure matching plugin's default
         print_step("Creating new configuration structure...")
         dedrm_config = {
             "adeptkeys": {},
@@ -2349,7 +2398,6 @@ def create_dedrm_config(kindle_key, kindlekey_txt_path, reference_json_path=None
     dedrm_config["kindleextrakeyfile"] = kindlekey_txt_path
     
     # Add the kindle key exactly like the plugin does
-    # The plugin uses the key name "kindlekey" + count, but for single key we use "kindlekey"
     dedrm_config["kindlekeys"]["kindlekey"] = kindle_key
     
     return dedrm_config
@@ -6499,20 +6547,20 @@ def main():
         
         display_phase_banner(1, "Key Extraction")
 
-        # Cleanup previous files from both possible locations (failsafe)
-        # Previous run might have used different location based on write permissions
-        cleanup_locations = [
-            os.path.join(script_dir, "Keys"),  # Script directory
-            os.path.join(user_home, "AppData", "Local", "Kindle_Key_Finder", "Keys")  # Fallback
+        # Backup existing key files before extraction (if they exist)
+        # This preserves keys from previous runs so we can append new keys
+        print_step("Checking for existing key files to preserve...")
+        
+        key_files_to_backup = [
+            (output_key, os.path.join(backups_dir, f"kindlekey_backup_{timestamp}.txt")),
+            (output_k4i, os.path.join(backups_dir, f"kindlekey_backup_{timestamp}.k4i"))
         ]
         
-        for location in cleanup_locations:
-            for filename in ["kindlekey.txt", "kindlekey.k4i"]:
-                file_path = os.path.join(location, filename)
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                    print_ok(f"Previous {filename} deleted from {os.path.basename(location)}")
-
+        for source_file, backup_file in key_files_to_backup:
+            if os.path.exists(source_file):
+                shutil.copy2(source_file, backup_file)
+                print_ok(f"Backed up {os.path.basename(source_file)} to backups folder")
+        
         print()
         
         # Extract keys using the extractor (since we need both txt and k4i files)
@@ -6615,9 +6663,9 @@ def main():
             
         print_ok("Kindle key data processed successfully.")
 
-        # Create the dedrm configuration
+        # Create the dedrm configuration (merge with existing if present)
         print_step("Creating DeDRM configuration...")
-        dedrm_config = create_dedrm_config(kindle_key, output_key, reference_json)
+        dedrm_config = create_dedrm_config(kindle_key, output_key, dedrm_json, reference_json)
 
         # Write the JSON using the same method as the plugin: json.dump() with indent=2
         print_step("Writing dedrm.json with exact plugin formatting...")
