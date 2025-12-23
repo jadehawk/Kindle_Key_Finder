@@ -2115,7 +2115,7 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
             print_step("Script will now exit gracefully")
             print()
             # Return success (not failure) since this is an expected scenario
-            return True, None, None, extraction_stats
+            return True, None, None, extraction_stats, content_dir
         
         # NEW: Check if content_dir (books location) is in a cloud-synced location
         is_cloud, cloud_service = is_cloud_synced_location(content_dir)
