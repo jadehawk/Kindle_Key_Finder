@@ -1309,6 +1309,52 @@ def append_to_history(working_dir, asin):
     except Exception as e:
         print_warn(f"Failed to update history file: {e}")
 
+def load_failed_books(working_dir):
+    """
+    Load failed books from Failed-Books.txt
+    Uses working_dir which respects fallback paths
+    Returns: set of "Title - ASIN" entries
+    """
+    failed_books_file = os.path.join(working_dir, "Failed-Books.txt")
+    failed_entries = set()
+    
+    try:
+        if os.path.exists(failed_books_file):
+            with open(failed_books_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    entry = line.strip()
+                    if entry:
+                        failed_entries.add(entry)
+    except Exception as e:
+        print_warn(f"Failed to load failed books file: {e}")
+    
+    return failed_entries
+
+def append_to_failed_books(working_dir, title, asin):
+    """
+    Append book to Failed-Books.txt (no duplicates)
+    Format: "Title - ASIN"
+    Uses working_dir which respects fallback paths
+    """
+    failed_books_file = os.path.join(working_dir, "Failed-Books.txt")
+    
+    try:
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(failed_books_file), exist_ok=True)
+        
+        # Load existing entries to check for duplicates
+        existing_entries = load_failed_books(working_dir)
+        
+        # Create new entry
+        entry = f"{title} - {asin}"
+        
+        # Only append if not already in file
+        if entry not in existing_entries:
+            with open(failed_books_file, 'a', encoding='utf-8') as f:
+                f.write(f"{entry}\n")
+    except Exception as e:
+        print_warn(f"Failed to update failed books file: {e}")
+
 def prompt_history_action(total_books, previously_processed_count):
     """
     Prompt user what to do with previously processed books
@@ -2250,6 +2296,9 @@ def extract_keys_using_extractor(extractor_path, content_dir, output_key, output
                 # which would launch a browser window unnecessarily
                 failed_book_title = fetched_title if fetched_title != asin else asin
                 extraction_stats['failed_books'].append((asin, failed_book_title, error_msg if error_msg else "Unknown error"))
+                
+                # Track failed book in Failed-Books.txt
+                append_to_failed_books(working_dir, failed_book_title, asin)
         
         print()
         
@@ -4652,6 +4701,9 @@ def import_all_azw_files(content_dir, library_path, use_duplicates=False, per_bo
             print_error(f"  ✗ FAILED")
             results['failed'] += 1
             results['failed_books'].append((book_name, error_msg))
+            
+            # Track failed book in Failed-Books.txt
+            append_to_failed_books(working_dir, book_title if book_title else asin, asin)
     
     print()
     
@@ -5851,6 +5903,10 @@ def process_book_conversions(library_path, book_ids, calibre_config=None, workin
             stats['failed'] += 1
             stats['errors'].append(f"Book {book_id}: {error_msg}")
             stats['failed_conversions'].append((book_id, title, author, error_msg))
+            
+            # Track failed book in Failed-Books.txt
+            append_to_failed_books(working_dir, title, str(book_id))
+            
             print()
             continue
         
